@@ -6,9 +6,10 @@ import 'package:location/location.dart' as location_pkg;
 import 'package:geocoding/geocoding.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:io';
-import 'dart:convert'; // Import thêm để decode user
-import 'package:shared_preferences/shared_preferences.dart'; // Import thêm để lấy user ID
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
+// Đảm bảo các đường dẫn import này đúng với cấu trúc dự án của bạn
 import '../models/disaster_model.dart';
 import '../services/disaster_service.dart';
 import '../../report/screens/create_report_screen.dart';
@@ -39,7 +40,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
   @override
   void initState() {
     super.initState();
-    _loadCurrentUser(); // Lấy User ID
+    _loadCurrentUser();
     _loadReports();
   }
 
@@ -64,7 +65,16 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
     }
   }
 
-  // Hàm public để MainScreen gọi
+  // Hàm tìm tất cả báo cáo gần một vị trí (xử lý việc marker đè nhau)
+  List<DisasterReport> _findNearbyReports(LatLng targetPoint) {
+    const Distance distance = Distance();
+    // Lọc ra những báo cáo nằm trong bán kính 20 mét so với điểm được bấm
+    return _reports.where((report) {
+      return distance.as(LengthUnit.Meter, targetPoint, report.location) < 20;
+    }).toList();
+  }
+
+  // --- MAP MOVEMENT & LOCATION ---
   void animatedMapMove(LatLng destLocation, double destZoom) {
     final latTween = Tween<double>(
       begin: _mapController.camera.center.latitude,
@@ -105,41 +115,6 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
     controller.forward();
   }
 
-  Future<void> _sendSosSignal() async {
-    if (_currentPosition == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Chưa lấy được vị trí!')));
-      _myLocation();
-      return;
-    }
-
-    final sosReport = DisasterReport(
-      id: '',
-      title: "CỨU HỘ KHẨN CẤP!",
-      description: "Người dùng cần hỗ trợ y tế/cứu nạn ngay lập tức tại vị trí này.",
-      location: _currentPosition!,
-      type: DisasterType.sos,
-      time: DateTime.now(),
-      radius: 50,
-      imagePath: null,
-      userId: _currentUserId ?? 'unknown', // Gửi kèm ID
-    );
-
-    bool success = await _disasterService.createReport(sosReport);
-
-    if (success) {
-      _loadReports();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("TÍN HIỆU ĐÃ ĐƯỢC GỬI!", style: TextStyle(fontWeight: FontWeight.bold)),
-          backgroundColor: Colors.redAccent,
-          duration: Duration(seconds: 5),
-        ),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lỗi gửi tín hiệu!")));
-    }
-  }
-
   Future<void> _myLocation() async {
     setState(() => _isLocating = true);
     try {
@@ -177,6 +152,44 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
       setState(() => _isLocating = false);
     }
   }
+
+  // --- SOS SIGNAL ---
+  Future<void> _sendSosSignal() async {
+    if (_currentPosition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Chưa lấy được vị trí!')));
+      _myLocation();
+      return;
+    }
+
+    final sosReport = DisasterReport(
+      id: '',
+      title: "CỨU HỘ KHẨN CẤP!",
+      description: "Người dùng cần hỗ trợ y tế/cứu nạn ngay lập tức tại vị trí này.",
+      location: _currentPosition!,
+      type: DisasterType.sos,
+      time: DateTime.now(),
+      radius: 50,
+      imagePath: null,
+      userId: _currentUserId ?? 'unknown',
+    );
+
+    bool success = await _disasterService.createReport(sosReport);
+
+    if (success) {
+      _loadReports();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("TÍN HIỆU ĐÃ ĐƯỢC GỬI!", style: TextStyle(fontWeight: FontWeight.bold)),
+          backgroundColor: Colors.redAccent,
+          duration: Duration(seconds: 5),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lỗi gửi tín hiệu!")));
+    }
+  }
+
+  // --- UI COMPONENTS ---
 
   void _showMyLocationInfo(LatLng location) {
     showModalBottomSheet(
@@ -296,11 +309,13 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
     );
   }
 
-  // --- HÀM TẠO MARKER ---
+  // --- HÀM TẠO MARKER (ĐÃ SỬA ĐỂ GỌI DANH SÁCH) ---
   Widget _buildReportMarkerContent(DisasterReport report, {bool isSos = false}) {
     return GestureDetector(
       onTap: () {
-        _showReportDetailModal(report);
+        // Thay đổi: Tìm các báo cáo lân cận và hiển thị danh sách
+        final nearbyReports = _findNearbyReports(report.location);
+        _showReportsModal(nearbyReports);
       },
       child: Container(
         decoration: BoxDecoration(
@@ -314,154 +329,158 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
     );
   }
 
-  // --- HÀM HIỂN THỊ CHI TIẾT BÁO CÁO (CÓ PHÂN QUYỀN) ---
-  void _showReportDetailModal(DisasterReport report) {
+  // --- HÀM HIỂN THỊ DANH SÁCH BÁO CÁO (MỚI) ---
+  void _showReportsModal(List<DisasterReport> nearbyReports) {
     showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        builder: (context) => Container(
-          padding: const EdgeInsets.all(20),
-          height: 400,
-          width: double.infinity,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Icon(report.getIcon(), color: report.getColor(), size: 30),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              report.title,
-                              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: 500, // Cao hơn chút để hiện danh sách
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Column(
+          children: [
+            // Thanh nắm kéo
+            Center(
+              child: Container(
+                width: 40, height: 5,
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+            const SizedBox(height: 15),
 
-                    // --- KIỂM TRA QUYỀN: CHỈ HIỆN NÚT NẾU LÀ CHÍNH CHỦ ---
-                    if (_currentUserId != null && _currentUserId == report.userId) ...[
-                      IconButton(
-                        icon: const Icon(Icons.edit, color: Colors.blue),
-                        onPressed: () async {
-                          Navigator.pop(context);
-                          final result = await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => CreateReportScreen(
-                                currentLocation: report.location,
-                                existingReport: report,
+            // Tiêu đề
+            Text(
+              "Tìm thấy ${nearbyReports.length} báo cáo tại đây",
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blueAccent),
+            ),
+            const Divider(),
+
+            // DANH SÁCH CUỘN
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: nearbyReports.length,
+                separatorBuilder: (ctx, i) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final report = nearbyReports[index];
+                  // Kiểm tra xem báo cáo này có phải của tôi không
+                  final isMyReport = _currentUserId != null && _currentUserId == report.userId;
+
+                  return Container(
+                    margin: const EdgeInsets.symmetric(vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: report.getColor().withOpacity(0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(report.getIcon(), color: report.getColor()),
+                          ),
+                          title: Text(report.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text(
+                            "${report.type.toVietnamese()} • ${report.userName ?? 'Ẩn danh'}",
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          // Nút hành động nằm gọn trong từng Item
+                          trailing: isMyReport
+                              ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
+                                onPressed: () async {
+                                  Navigator.pop(context); // Đóng bảng
+                                  final result = await Navigator.push(context, MaterialPageRoute(builder: (context) => CreateReportScreen(currentLocation: report.location, existingReport: report)));
+                                  if (result == true) _loadReports();
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                                onPressed: () {
+                                  _confirmDelete(report);
+                                },
+                              ),
+                            ],
+                          )
+                              : null, // Người khác thì không hiện nút gì
+                        ),
+                        // Hiển thị ảnh nếu có
+                        if (report.imagePath != null && report.imagePath!.isNotEmpty)
+                          GestureDetector(
+                            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => FullScreenImageScreen(imagePath: report.imagePath!, heroTag: "map_${report.id}"))),
+                            child: Container(
+                              height: 120, width: double.infinity,
+                              margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: report.imagePath!.startsWith('http')
+                                    ? Image.network(report.imagePath!, fit: BoxFit.cover)
+                                    : Image.file(
+                                  File(report.imagePath!),
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (ctx, error, stackTrace) => const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
+                                ),
                               ),
                             ),
-                          );
-                          if (result == true) _loadReports();
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () {
-                          showDialog(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: const Text("Xóa cảnh báo?"),
-                              content: const Text("Hành động này sẽ xóa vĩnh viễn khỏi hệ thống."),
-                              actions: [
-                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Hủy")),
-                                TextButton(
-                                  onPressed: () async {
-                                    Navigator.pop(ctx);
-                                    bool success = await _disasterService.deleteReport(report.id);
-                                    if (success) {
-                                      _loadReports();
-                                      Navigator.pop(context);
-                                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Đã xóa thành công.")));
-                                    } else {
-                                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lỗi: Không xóa được!")));
-                                    }
-                                  },
-                                  child: const Text("Xóa vĩnh viễn", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                    // ----------------------------------------------------
-                  ],
-                ),
-
-                if (report.userName != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4, bottom: 8),
-                    child: Text("Đăng bởi: ${report.userName}", style: TextStyle(color: Colors.grey[600], fontStyle: FontStyle.italic, fontSize: 12)),
-                  ),
-
-                const Divider(),
-                Text("Loại: ${report.type.toVietnamese()}", style: TextStyle(color: report.getColor(), fontWeight: FontWeight.bold)),
-                const SizedBox(height: 10),
-                Text(report.description, style: const TextStyle(fontSize: 16)),
-
-                if (report.imagePath != null && report.imagePath!.isNotEmpty) ...[
-                  const SizedBox(height: 15),
-                  const Text("Ảnh hiện trường:", style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 5),
-                  GestureDetector(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => FullScreenImageScreen(
-                            imagePath: report.imagePath!,
-                            heroTag: report.id,
-                          ),
-                        ),
-                      );
-                    },
-                    child: Hero(
-                      tag: report.id,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: report.imagePath!.startsWith('http')
-                            ? Image.network(
-                          report.imagePath!,
-                          height: 150, width: double.infinity, fit: BoxFit.cover,
-                          loadingBuilder: (ctx, child, loading) => loading == null ? child : const Center(child: CircularProgressIndicator()),
-                          errorBuilder: (ctx, err, stack) => const Icon(Icons.broken_image, size: 50, color: Colors.grey),
-                        )
-                            : Image.file(
-                          File(report.imagePath!),
-                          height: 150, width: double.infinity, fit: BoxFit.cover,
-                          errorBuilder: (ctx, err, stack) => const Center(child: Text("Ảnh gốc không tồn tại")),
-                        ),
-                      ),
+                          )
+                      ],
                     ),
-                  ),
-                ],
-                const SizedBox(height: 15),
-                Text(
-                  "Thời gian: ${report.time.toLocal().hour.toString().padLeft(2, '0')}:${report.time.toLocal().minute.toString().padLeft(2, '0')} - ${report.time.toLocal().day}/${report.time.toLocal().month}",
-                  style: const TextStyle(color: Colors.grey),
-                ),
-              ],
+                  );
+                },
+              ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- HÀM XÁC NHẬN XÓA (MỚI) ---
+  void _confirmDelete(DisasterReport report) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Xóa cảnh báo?"),
+        content: const Text("Hành động này không thể hoàn tác."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Hủy")),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx); // Đóng dialog
+              Navigator.pop(context); // Đóng bottom sheet
+              bool success = await _disasterService.deleteReport(report.id);
+              if (success) {
+                _loadReports();
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Đã xóa thành công.")));
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lỗi: Không xóa được!")));
+              }
+            },
+            child: const Text("Xóa", style: TextStyle(color: Colors.red)),
           ),
-        )
-        );
-    }
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
 
-    // 1. TÁCH DANH SÁCH BÁO CÁO THÀNH 2 NHÓM: SOS và THƯỜNG
+    // TÁCH DANH SÁCH BÁO CÁO THÀNH 2 NHÓM: SOS và THƯỜNG
     final List<DisasterReport> sosReports = _reports.where((r) => r.type == DisasterType.sos).toList();
     final List<DisasterReport> regularReports = _reports.where((r) => r.type != DisasterType.sos).toList();
 
@@ -473,7 +492,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
       ),
       body: Stack(
         children: [
-          // LỚP 1: BẢN ĐỒ (PHẢI Ở DƯỚI CÙNG)
+          // LỚP 1: BẢN ĐỒ
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
@@ -507,7 +526,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                 }).toList(),
               ),
 
-              // MARKER LAYER 1: VỊ TRÍ HIỆN TẠI (Nên để đầu tiên để tránh bị đè)
+              // MARKER LAYER 1: VỊ TRÍ HIỆN TẠI
               if (_currentPosition != null)
                 MarkerLayer(
                   markers: [
@@ -524,7 +543,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                   ],
                 ),
 
-              // MARKER LAYER 2: BÁO CÁO THƯỜNG (Nằm dưới Marker SOS)
+              // MARKER LAYER 2: BÁO CÁO THƯỜNG
               MarkerLayer(
                 markers: regularReports.map((report) {
                   return Marker(
@@ -535,13 +554,12 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                 }).toList(),
               ),
 
-              // MARKER LAYER 3: BÁO CÁO SOS (Luôn nằm TRÊN CÙNG của các Marker)
+              // MARKER LAYER 3: BÁO CÁO SOS
               MarkerLayer(
                 markers: sosReports.map((report) {
                   return Marker(
                     point: report.location,
-                    width: 50, // Kích thước lớn hơn
-                    height: 50,
+                    width: 50, height: 50,
                     alignment: Alignment.topCenter,
                     child: _buildReportMarkerContent(report, isSos: true),
                   );
@@ -550,7 +568,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
             ],
           ),
 
-          // LỚP 2: NÚT SOS (ĐẶT Ở GÓC TRÊN TRÁI VÀ NỔI LÊN TRÊN CÙNG CỦA MỌI THỨ)
+          // LỚP 2: NÚT SOS
           Positioned(
             top: 20,
             left: 15,

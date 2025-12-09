@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart'; // Nhớ import cái này để dùng LatLng
 import 'features/map/screens/map_screen.dart';
 import 'features/list/screens/alert_list_screen.dart';
+import 'features/auth/screens/profile_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -31,14 +32,12 @@ class _MainScreenState extends State<MainScreen> {
           // TAB 1: DANH SÁCH
           AlertListScreen(
             key: UniqueKey(), // Giữ nguyên để refresh danh sách khi vào
-
             // 2. XỬ LÝ KHI BẤM VÀO 1 DÒNG CẢNH BÁO
             onNavigateToMap: (LatLng location) {
               // Bước A: Chuyển ngay sang tab Bản đồ (Index 0)
               setState(() {
                 _selectedIndex = 0;
               });
-
               // Bước B: Ra lệnh cho bản đồ bay đến vị trí đó
               // Dùng Future.delayed 100ms để đảm bảo giao diện Map hiện lên xong mới bắt đầu bay
               Future.delayed(const Duration(milliseconds: 100), () {
@@ -47,6 +46,8 @@ class _MainScreenState extends State<MainScreen> {
               });
             },
           ),
+          // Tab 2: Profile
+          const ProfileScreen(),
         ],
       ),
 
@@ -69,6 +70,10 @@ class _MainScreenState extends State<MainScreen> {
             selectedIcon: Icon(Icons.list_alt),
             label: 'Danh sách',
           ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person),
+            label: 'Cá nhân'),
         ],
       ),
     );

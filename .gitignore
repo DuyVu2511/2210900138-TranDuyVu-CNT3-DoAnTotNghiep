@@ -1,0 +1,24 @@
+# --- 1. SERVER (Node.js) ---
+node_modules/
+.env
+npm-debug.log
+
+# --- 2. APP FLUTTER ---
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+.pub-cache/
+.pub/
+android/local.properties
+android/.gradle/
+ios/.generated/
+
+# --- 3. HỆ THỐNG & IDE (Chặn chung) ---
+.idea/
+.vscode/
+*.swp
+*.log
+.DS_Store
+Thumbs.db
+*.iml

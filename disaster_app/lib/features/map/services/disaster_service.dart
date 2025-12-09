@@ -5,11 +5,18 @@ import 'package:latlong2/latlong.dart';
 import '../models/disaster_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../auth/models/user_model.dart';
+import 'package:flutter/foundation.dart';
 
 class DisasterService {
-  // ⚠️ SỬA DÒNG NÀY: Thay bằng IP máy bạn (Giữ nguyên cổng 3000)
-  // Ví dụ: static const String baseUrl = 'http://192.168.1.12:3000/api/reports';
-  static const String baseUrl = 'http://172.16.9.38:3000/api/reports'; // Dùng 10.0.2.2 nếu chạy Máy ảo Android
+  static String get baseUrl {
+    if (kReleaseMode) {
+      return 'https://disater-server.onrender.com/api/reports';
+    } else {
+      // --- LINK CHẠY MÁY TÍNH (Để debug) ---
+      // Thay bằng IP máy tính của bạn
+      return 'http://172.16.9.38:3000/api/reports';
+    }
+  }
 
   // 1. Lấy danh sách báo cáo từ Server
   Future<List<DisasterReport>> fetchReports() async {

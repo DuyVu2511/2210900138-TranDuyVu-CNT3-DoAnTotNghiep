@@ -3,13 +3,22 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
 
+// ⚠️ QUAN TRỌNG: Hãy chắc chắn bạn đã import đúng file api_config.dart
+// Nếu dòng dưới bị đỏ, hãy xóa đi và gõ lại "ApiConfig" để VS Code gợi ý import đúng.
+import 'package:disaster_app/api_config.dart';
 class AuthService {
-  // ⚠️ SỬA IP CHO ĐÚNG VỚI MÁY BẠN
-  static const String baseUrl = 'http://172.16.9.38:3000/api/auth';
+
+  // --- SỬA ĐỔI QUAN TRỌNG TẠI ĐÂY ---
+  // Không dùng link cứng IP 172... nữa.
+  // Lấy link từ ApiConfig (nó sẽ tự biết khi nào dùng Render, khi nào dùng Local)
+  static String get baseUrl => '${ApiConfig.baseUrl}/auth';
 
   // 1. Đăng ký
   Future<bool> register(String name, String phone, String password) async {
     try {
+      // In ra để kiểm tra xem nó đang gọi vào đâu
+      print("Đang đăng ký tại: $baseUrl/register");
+
       final response = await http.post(
         Uri.parse('$baseUrl/register'),
         headers: {'Content-Type': 'application/json'},
@@ -25,6 +34,8 @@ class AuthService {
   // 2. Đăng nhập
   Future<User?> login(String phone, String password) async {
     try {
+      print("Đang đăng nhập tại: $baseUrl/login");
+
       final response = await http.post(
         Uri.parse('$baseUrl/login'),
         headers: {'Content-Type': 'application/json'},
@@ -35,7 +46,6 @@ class AuthService {
         final data = json.decode(response.body);
         final user = User.fromJson(data);
 
-        // Lưu thông tin người dùng vào máy để lần sau tự vào
         await _saveUserToLocal(user);
         return user;
       }
@@ -46,13 +56,13 @@ class AuthService {
     }
   }
 
-  // 3. Đăng xuất
+  // 3. Đăng xuất (Giữ nguyên)
   Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('user_data');
   }
 
-  // 4. Lấy thông tin người dùng đang đăng nhập
+  // 4. Lấy thông tin (Giữ nguyên)
   Future<User?> getCurrentUser() async {
     final prefs = await SharedPreferences.getInstance();
     final String? userData = prefs.getString('user_data');
@@ -62,7 +72,7 @@ class AuthService {
     return null;
   }
 
-  // Hàm phụ: Lưu vào máy
+  // Hàm phụ (Giữ nguyên)
   Future<void> _saveUserToLocal(User user) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user_data', json.encode(user.toJson()));

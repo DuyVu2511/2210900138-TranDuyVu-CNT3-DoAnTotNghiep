@@ -153,6 +153,20 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
     }
   }
 
+  // Hàm tính và định dạng khoảng cách từ chỗ mình đến điểm thiên tai
+  String _calculateDistance(LatLng target) {
+    if (_currentPosition == null) return "? km";
+
+    final Distance distance = const Distance();
+    final double meters = distance.as(LengthUnit.Meter, _currentPosition!, target);
+
+    if (meters < 1000) {
+      return "${meters.toInt()}m"; // Dưới 1km thì hiện mét (VD: 500m)
+    } else {
+      return "${(meters / 1000).toStringAsFixed(1)}km"; // Trên 1km thì hiện km (VD: 2.5km)
+    }
+  }
+
   // --- SOS SIGNAL ---
   Future<void> _sendSosSignal() async {
     if (_currentPosition == null) {
@@ -336,7 +350,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        height: 500, // Cao hơn chút để hiện danh sách
+        height: 500,
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -344,7 +358,6 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
         padding: const EdgeInsets.symmetric(vertical: 20),
         child: Column(
           children: [
-            // Thanh nắm kéo
             Center(
               child: Container(
                 width: 40, height: 5,
@@ -353,14 +366,12 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
             ),
             const SizedBox(height: 15),
 
-            // Tiêu đề
             Text(
               "Tìm thấy ${nearbyReports.length} báo cáo tại đây",
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blueAccent),
             ),
             const Divider(),
 
-            // DANH SÁCH CUỘN
             Expanded(
               child: ListView.separated(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -368,7 +379,6 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                 separatorBuilder: (ctx, i) => const Divider(height: 1),
                 itemBuilder: (context, index) {
                   final report = nearbyReports[index];
-                  // Kiểm tra xem báo cáo này có phải của tôi không
                   final isMyReport = _currentUserId != null && _currentUserId == report.userId;
 
                   return Container(
@@ -389,12 +399,42 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                             ),
                             child: Icon(report.getIcon(), color: report.getColor()),
                           ),
-                          title: Text(report.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text(
-                            "${report.type.toVietnamese()} • ${report.userName ?? 'Ẩn danh'}",
-                            style: const TextStyle(fontSize: 12),
+                          // Dùng Row để hiện Tiêu đề + Khoảng cách ---
+                          title: Row(
+                            children: [
+                              Expanded(
+                                  child: Text(report.title, style: const TextStyle(fontWeight: FontWeight.bold))
+                              ),
+                              // Badge hiển thị khoảng cách
+                              Container(
+                                margin: const EdgeInsets.only(left: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.orange.shade200),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.directions_walk, size: 12, color: Colors.deepOrange),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      _calculateDistance(report.location), // Gọi hàm tính toán
+                                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.deepOrange),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                          // Nút hành động nằm gọn trong từng Item
+                          // ---------------------------------------------------------
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 4.0),
+                            child: Text(
+                              "${report.type.toVietnamese()} • ${report.userName ?? 'Ẩn danh'}",
+                              style: const TextStyle(fontSize: 12, color: Colors.grey),
+                            ),
+                          ),
                           trailing: isMyReport
                               ? Row(
                             mainAxisSize: MainAxisSize.min,
@@ -402,22 +442,27 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                               IconButton(
                                 icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
                                 onPressed: () async {
-                                  Navigator.pop(context); // Đóng bảng
-                                  final result = await Navigator.push(context, MaterialPageRoute(builder: (context) => CreateReportScreen(currentLocation: report.location, existingReport: report)));
+                                  Navigator.pop(context);
+                                  final result = await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => CreateReportScreen(
+                                        currentLocation: report.location,
+                                        existingReport: report,
+                                      ),
+                                    ),
+                                  );
                                   if (result == true) _loadReports();
                                 },
                               ),
                               IconButton(
                                 icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                                onPressed: () {
-                                  _confirmDelete(report);
-                                },
+                                onPressed: () => _confirmDelete(report),
                               ),
                             ],
                           )
-                              : null, // Người khác thì không hiện nút gì
+                              : null,
                         ),
-                        // Hiển thị ảnh nếu có
                         if (report.imagePath != null && report.imagePath!.isNotEmpty)
                           GestureDetector(
                             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => FullScreenImageScreen(imagePath: report.imagePath!, heroTag: "map_${report.id}"))),
@@ -431,7 +476,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                                     : Image.file(
                                   File(report.imagePath!),
                                   fit: BoxFit.cover,
-                                  errorBuilder: (ctx, error, stackTrace) => const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
+                                  errorBuilder: (ctx, err, stack) => const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
                                 ),
                               ),
                             ),

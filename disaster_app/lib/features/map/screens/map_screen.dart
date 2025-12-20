@@ -8,8 +8,6 @@ import 'package:share_plus/share_plus.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
-
-// Đảm bảo các đường dẫn import này đúng với cấu trúc dự án của bạn
 import '../models/disaster_model.dart';
 import '../services/disaster_service.dart';
 import '../../report/screens/create_report_screen.dart';
@@ -34,6 +32,11 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
   // BIẾN LƯU ID NGƯỜI DÙNG
   String? _currentUserId;
 
+  final TextEditingController _searchController = TextEditingController();
+
+  LatLng? _searchResultLocation;
+  bool _isSearchingAddress = false;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -42,6 +45,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
     super.initState();
     _loadCurrentUser();
     _loadReports();
+    _myLocation();
   }
 
   // HÀM LẤY ID NGƯỜI DÙNG TỪ MÁY
@@ -150,6 +154,44 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
     } catch (e) {
       debugPrint("Lỗi: $e");
       setState(() => _isLocating = false);
+    }
+  }
+
+  Future<void> _searchPlace() async {
+    String query = _searchController.text.trim();
+    if (query.isEmpty) return;
+
+    // Ẩn bàn phím
+    FocusScope.of(context).unfocus();
+
+    // 1. Bắt đầu tìm -> Hiện loading
+    setState(() => _isSearchingAddress = true);
+
+    try {
+      // Tìm tọa độ từ tên địa điểm
+      List<Location> locations = await locationFromAddress(query);
+
+      if (locations.isNotEmpty) {
+        Location loc = locations.first;
+        LatLng target = LatLng(loc.latitude, loc.longitude);
+
+        // 2. Cập nhật vị trí tìm được
+        setState(() {
+          _searchResultLocation = target; // Lưu để vẽ marker
+        });
+
+        // Bay đến địa điểm đó (Zoom 14)
+        animatedMapMove(target, 15.0);
+
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Đã tìm thấy: $query")));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Không tìm thấy địa điểm này!")));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lỗi: Không tìm thấy địa danh")));
+    } finally {
+      // 4. Kết thúc tìm -> Tắt loading dù thành công hay thất bại
+      setState(() => _isSearchingAddress = false);
     }
   }
 
@@ -520,12 +562,11 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
       ),
     );
   }
-
   @override
   Widget build(BuildContext context) {
     super.build(context);
 
-    // TÁCH DANH SÁCH BÁO CÁO THÀNH 2 NHÓM: SOS và THƯỜNG
+    // TÁCH DANH SÁCH BÁO CÁO
     final List<DisasterReport> sosReports = _reports.where((r) => r.type == DisasterType.sos).toList();
     final List<DisasterReport> regularReports = _reports.where((r) => r.type != DisasterType.sos).toList();
 
@@ -537,7 +578,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
       ),
       body: Stack(
         children: [
-          // LỚP 1: BẢN ĐỒ
+          // --- LỚP 1: BẢN ĐỒ ---
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
@@ -549,6 +590,9 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom | InteractiveFlag.doubleTapZoom,
               ),
+              onTap: (_, __) {
+                FocusScope.of(context).unfocus();
+              },
             ),
             children: [
               TileLayer(
@@ -558,6 +602,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                 retinaMode: true,
               ),
 
+              // Vòng tròn bán kính
               CircleLayer(
                 circles: _reports.map((report) {
                   return CircleMarker(
@@ -571,7 +616,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                 }).toList(),
               ),
 
-              // MARKER LAYER 1: VỊ TRÍ HIỆN TẠI
+              // Marker: Vị trí của tôi
               if (_currentPosition != null)
                 MarkerLayer(
                   markers: [
@@ -588,7 +633,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                   ],
                 ),
 
-              // MARKER LAYER 2: BÁO CÁO THƯỜNG
+              // Marker: Báo cáo thường
               MarkerLayer(
                 markers: regularReports.map((report) {
                   return Marker(
@@ -599,7 +644,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                 }).toList(),
               ),
 
-              // MARKER LAYER 3: BÁO CÁO SOS
+              // Marker: Báo cáo SOS
               MarkerLayer(
                 markers: sosReports.map((report) {
                   return Marker(
@@ -610,23 +655,75 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                   );
                 }).toList(),
               ),
+
+              // --- MARKER KẾT QUẢ TÌM KIẾM (ĐẶT Ở ĐÂY LÀ ĐÚNG) ---
+              if (_searchResultLocation != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _searchResultLocation!,
+                      width: 50, height: 50,
+                      child: Column(
+                        children: [
+                          const Icon(Icons.location_on, color: Colors.purpleAccent, size: 40),
+                          Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.purple, shape: BoxShape.circle)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
             ],
           ),
+          // (Kết thúc FlutterMap ở đây)
 
-          // LỚP 2: NÚT SOS
+          // --- LỚP 2: THANH TÌM KIẾM ---
           Positioned(
-            top: 20,
-            left: 15,
+            top: 10, left: 15, right: 15,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.95),
+                borderRadius: BorderRadius.circular(30),
+                boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))],
+              ),
+              child: TextField(
+                controller: _searchController,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (_) => _searchPlace(),
+                decoration: InputDecoration(
+                  hintText: "Tìm kiếm (VD: Hà Nội...)",
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  prefixIcon: const Icon(Icons.search, color: Colors.blueAccent),
+                  suffixIcon: _isSearchingAddress
+                      ? const Padding(
+                    padding: EdgeInsets.all(12.0),
+                    child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                  )
+                      : IconButton(
+                    icon: const Icon(Icons.clear, color: Colors.grey),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() => _searchResultLocation = null);
+                      FocusScope.of(context).unfocus();
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // --- LỚP 3: NÚT SOS ---
+          Positioned(
+            top: 80, left: 15,
             child: Material(
               color: Colors.transparent,
-              child: SosButton(
-                onSosPressed: _sendSosSignal,
-              ),
+              child: SosButton(onSosPressed: _sendSosSignal),
             ),
           ),
         ],
       ),
 
+      // Floating Action Button
       floatingActionButton: Column(
         mainAxisAlignment: MainAxisAlignment.end,
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -641,7 +738,6 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                 : const Icon(Icons.my_location, color: Colors.blue),
           ),
           const SizedBox(height: 10),
-
           FloatingActionButton.extended(
             heroTag: "btn_report",
             onPressed: () async {
@@ -650,9 +746,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                 _myLocation(); return;
               }
               final result = await Navigator.push(context, MaterialPageRoute(builder: (context) => CreateReportScreen(currentLocation: _currentPosition!)));
-              if (result == true) {
-                _loadReports();
-              }
+              if (result == true) _loadReports();
             },
             backgroundColor: Colors.redAccent,
             icon: const Icon(Icons.add_alert, color: Colors.white),

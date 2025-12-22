@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:location/location.dart' as location_pkg;
 import 'package:geocoding/geocoding.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +14,8 @@ import '../services/disaster_service.dart';
 import '../../report/screens/create_report_screen.dart';
 import '../../../core/widgets/full_screen_image.dart';
 import '../widgets/sos_button.dart';
+import '../widgets/weather_card.dart';
+import '../services/weather_service.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -31,6 +34,9 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
 
   // BIẾN LƯU ID NGƯỜI DÙNG
   String? _currentUserId;
+
+  final WeatherService _weatherService = WeatherService();
+  Map<String, dynamic>? _weatherInfo;
 
   final TextEditingController _searchController = TextEditingController();
 
@@ -67,6 +73,151 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
         _reports = reports;
       });
     }
+  }
+
+  Future<void> _fetchWeather(LatLng location) async {
+    final data = await _weatherService.fetchWeather(location);
+    if (mounted && data != null) {
+      setState(() {
+        _weatherInfo = data;
+      });
+    }
+  }
+
+  void _showWeatherDetail() {
+    if (_weatherInfo == null) return;
+
+    final data = _weatherInfo!;
+
+    // Lấy dữ liệu và thêm đơn vị
+    final humidity = "${data['main']['humidity']}%";
+    final pressure = "${data['main']['pressure']} hPa";
+    final windSpeed = "${data['wind']['speed']} m/s";
+    final visibility = "${(data['visibility'] / 1000).toStringAsFixed(1)} km";
+
+    final city = data['name'];
+    final temp = data['main']['temp'].toInt();
+    final description = data['weather'][0]['description'];
+    final displayDesc = description[0].toUpperCase() + description.substring(1);
+    final iconCode = data['weather'][0]['icon'];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        height: 550,
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.white, Colors.blue.shade50],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 20, spreadRadius: 5)],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Thanh gạch ngang
+            Center(
+              child: Container(
+                width: 50, height: 5,
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+            const SizedBox(height: 25),
+
+            // HEADER
+            Text(city, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87)),
+            const SizedBox(height: 5),
+            Text(displayDesc, style: TextStyle(fontSize: 16, color: Colors.grey[600], fontStyle: FontStyle.italic)),
+
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Image.network(
+                  'https://openweathermap.org/img/wn/$iconCode@4x.png', // Icon to nét hơn
+                  width: 100, height: 100,
+                  fit: BoxFit.contain,
+                ),
+                Text(
+                  "$temp°",
+                  style: const TextStyle(
+                    fontSize: 80,
+                    fontWeight: FontWeight.w300,
+                    color: Colors.blueAccent,
+                    height: 1.0,
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 30),
+
+            // GRID THÔNG SỐ (2 hàng)
+            Row(
+              children: [
+                Expanded(child: _buildDetailCard(Icons.water_drop, "Độ ẩm", humidity, Colors.blue)),
+                const SizedBox(width: 15),
+                Expanded(child: _buildDetailCard(Icons.air, "Tốc độ gió", windSpeed, Colors.teal)),
+              ],
+            ),
+            const SizedBox(height: 15),
+            Row(
+              children: [
+                Expanded(child: _buildDetailCard(Icons.visibility, "Tầm nhìn", visibility, Colors.orange)),
+                const SizedBox(width: 15),
+                Expanded(child: _buildDetailCard(Icons.speed, "Áp suất", pressure, Colors.purple)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- WIDGET CON (PHIÊN BẢN ĐẸP) ---
+  Widget _buildDetailCard(IconData icon, String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          )
+        ],
+        border: Border.all(color: color.withOpacity(0.1), width: 1),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+              const SizedBox(height: 4),
+              Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87)),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   // Hàm tìm tất cả báo cáo gần một vị trí (xử lý việc marker đè nhau)
@@ -150,6 +301,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
           _isLocating = false;
         });
         animatedMapMove(_currentPosition!, 16.0);
+        _fetchWeather(_currentPosition!);
       }
     } catch (e) {
       debugPrint("Lỗi: $e");
@@ -182,6 +334,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
 
         // Bay đến địa điểm đó (Zoom 14)
         animatedMapMove(target, 15.0);
+        _fetchWeather(target);
 
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Đã tìm thấy: $query")));
       } else {
@@ -719,6 +872,15 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
               color: Colors.transparent,
               child: SosButton(onSosPressed: _sendSosSignal),
             ),
+          ),
+          // --- LỚP 4: THẺ THỜI TIẾT ---
+          Positioned(
+            top: 80,
+            right: 05,
+            child: GestureDetector(
+              onTap: _showWeatherDetail,
+              child: WeatherCard(weatherData: _weatherInfo),
+          ),
           ),
         ],
       ),

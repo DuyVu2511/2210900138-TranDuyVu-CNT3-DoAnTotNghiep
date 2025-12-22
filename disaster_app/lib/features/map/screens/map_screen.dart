@@ -17,6 +17,7 @@ import '../../../core/widgets/full_screen_image.dart';
 import '../widgets/sos_button.dart';
 import '../widgets/weather_card.dart';
 import '../services/weather_service.dart';
+import '../../report/screens/my_reports_screen.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -26,6 +27,13 @@ class MapScreen extends StatefulWidget {
 }
 
 class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin, TickerProviderStateMixin {
+  DisasterType? _selectedType;
+  List<DisasterReport> get _filteredReports {
+    if (_selectedType == null) {
+      return _reports;
+    }
+    return _reports.where((r) => r.type == _selectedType).toList();
+  }
   final MapController _mapController = MapController();
   LatLng? _currentPosition;
   bool _isLocating = false;
@@ -774,6 +782,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final List<DisasterReport> displayList = _filteredReports;
 
     // TÁCH DANH SÁCH BÁO CÁO
     final List<DisasterReport> sosReports = _reports.where((r) => r.type == DisasterType.sos).toList();
@@ -824,16 +833,14 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
 
               // Vòng tròn bán kính
               CircleLayer(
-                circles: _reports.map((report) {
-                  return CircleMarker(
-                    point: report.location,
-                    radius: report.radius,
-                    useRadiusInMeter: true,
-                    color: report.getColor().withOpacity(0.2),
-                    borderColor: report.getColor().withOpacity(0.6),
-                    borderStrokeWidth: 1.5,
-                  );
-                }).toList(),
+                circles: displayList.map((r) => CircleMarker(
+                  point: r.location,
+                  radius: r.radius,
+                  useRadiusInMeter: true,
+                  color: r.getColor().withOpacity(0.2),
+                  borderColor: r.getColor().withOpacity(0.6),
+                  borderStrokeWidth: 1.5,
+                )).toList(),
               ),
 
               // Marker: Vị trí của tôi
@@ -943,9 +950,98 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
             ),
           ),
 
+          // BƯỚC 4: THANH BỘ LỌC (Filter Bar) - MỚI THÊM
+          Positioned(
+            top: 65, // Nằm ngay dưới thanh tìm kiếm
+            left: 0,
+            right: 0,
+            child: SizedBox(
+              height: 40,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 15),
+                children: [
+                  // Nút "Tất cả"
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: const Text("Tất cả"),
+                      selected: _selectedType == null,
+                      onSelected: (bool selected) {
+                        setState(() => _selectedType = null);
+                      },
+                      selectedColor: Colors.blueAccent,
+                      backgroundColor: Colors.white,
+                      labelStyle: TextStyle(color: _selectedType == null ? Colors.white : Colors.black),
+                      elevation: 3,
+                    ),
+                  ),
+                  // Các nút loại thiên tai
+                  ...DisasterType.values.map((type) {
+                    // Không cần lọc SOS ở đây vì nó quan trọng, hoặc lọc tùy bạn. Ở đây mình ẩn nút SOS trên thanh lọc cho đỡ rối.
+                    if (type == DisasterType.sos) return const SizedBox();
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(type.toVietnamese()),
+                        selected: _selectedType == type,
+                        onSelected: (bool selected) {
+                          setState(() => _selectedType = selected ? type : null);
+                        },
+                        selectedColor: Colors.blueAccent,
+                        backgroundColor: Colors.white,
+                        labelStyle: TextStyle(color: _selectedType == type ? Colors.white : Colors.black),
+                        elevation: 3,
+                      ),
+                    );
+                  }).toList(),
+                ],
+              ),
+            ),
+          ),
+
+          // 3. CÁC NÚT CHỨC NĂNG (Đã đẩy xuống thấp hơn để nhường chỗ cho Thanh lọc)
+
+          // Nút Xóa đường (Nếu có)
+          if (_routePoints.isNotEmpty)
+            Positioned(
+              top: 180, right: 15,
+              child: FloatingActionButton.small(
+                onPressed: _clearRoute,
+                backgroundColor: Colors.white,
+                child: const Icon(Icons.close, color: Colors.red),
+              ),
+            ),
+
+          // 4. NÚT "TIN CỦA TÔI"
+          Positioned(
+            top: 120,
+            left: 15,
+            child: GestureDetector(
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const MyReportsScreen()),
+                );
+                _loadReports();
+              },
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 5)],
+                ),
+                // Icon lịch sử màu xanh
+                child: const Icon(Icons.history, color: Colors.blueAccent),
+              ),
+            ),
+          ),
+
           // --- LỚP 3: NÚT SOS ---
           Positioned(
-            top: 80, left: 15,
+            top: 180,
+            left: 15,
             child: Material(
               color: Colors.transparent,
               child: SosButton(onSosPressed: _sendSosSignal),
@@ -953,7 +1049,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
           ),
           // --- LỚP 4: THẺ THỜI TIẾT ---
           Positioned(
-            top: 80,
+            top: 120,
             right: 05,
             child: GestureDetector(
               onTap: _showWeatherDetail,

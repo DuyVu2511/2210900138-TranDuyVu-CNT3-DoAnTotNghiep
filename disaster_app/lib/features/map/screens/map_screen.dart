@@ -6,6 +6,7 @@ import 'package:location/location.dart' as location_pkg;
 import 'package:geocoding/geocoding.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
 import 'dart:io';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -42,6 +43,8 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
 
   LatLng? _searchResultLocation;
   bool _isSearchingAddress = false;
+
+  List<LatLng> _routePoints = [];
 
   @override
   bool get wantKeepAlive => true;
@@ -82,6 +85,52 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
         _weatherInfo = data;
       });
     }
+  }
+
+  // --- HÀM VẼ ĐƯỜNG ĐI (GỌI API OSRM) ---
+  Future<void> _drawRoute(LatLng destination) async {
+    if (_currentPosition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Đang lấy vị trí của bạn...")));
+      return;
+    }
+
+    // URL API OSRM (Miễn phí)
+    // Cú pháp: longitude,latitude (Ngược với Google Maps)
+    final String url =
+        'http://router.project-osrm.org/route/v1/driving/'
+        '${_currentPosition!.longitude},${_currentPosition!.latitude};'
+        '${destination.longitude},${destination.latitude}'
+        '?overview=full&geometries=geojson';
+
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['routes'].isNotEmpty) {
+          final coordinates = data['routes'][0]['geometry']['coordinates'] as List;
+
+          // Chuyển đổi dữ liệu về dạng LatLng
+          setState(() {
+            _routePoints = coordinates.map((coord) => LatLng(coord[1].toDouble(), coord[0].toDouble())).toList();
+          });
+
+          // Đóng danh sách và thông báo
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Đang vẽ đường đi...")));
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Không tìm thấy đường đi!")));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lỗi kết nối server bản đồ")));
+    }
+  }
+
+  // --- HÀM XÓA ĐƯỜNG ĐI ---
+  void _clearRoute() {
+    setState(() {
+      _routePoints = [];
+    });
   }
 
   void _showWeatherDetail() {
@@ -630,33 +679,40 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                               style: const TextStyle(fontSize: 12, color: Colors.grey),
                             ),
                           ),
-                          trailing: isMyReport
-                              ? Row(
+                          trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              // 1. NÚT CHỈ ĐƯỜNG (Luôn luôn hiển thị)
                               IconButton(
-                                icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
-                                onPressed: () async {
-                                  Navigator.pop(context);
-                                  final result = await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => CreateReportScreen(
-                                        currentLocation: report.location,
-                                        existingReport: report,
+                                icon: const Icon(Icons.directions, color: Colors.blueAccent),
+                                onPressed: () => _drawRoute(report.location), // <--- Gọi hàm vẽ đường ở đây
+                              ),
+
+                              // 2. NÚT SỬA/XÓA (Chỉ hiển thị nếu là bài của mình)
+                              if (isMyReport) ...[
+                                IconButton(
+                                  icon: const Icon(Icons.edit, color: Colors.orange, size: 20),
+                                  onPressed: () async {
+                                    Navigator.pop(context);
+                                    final result = await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => CreateReportScreen(
+                                          currentLocation: report.location,
+                                          existingReport: report,
+                                        ),
                                       ),
-                                    ),
-                                  );
-                                  if (result == true) _loadReports();
-                                },
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                                onPressed: () => _confirmDelete(report),
-                              ),
+                                    );
+                                    if (result == true) _loadReports();
+                                  },
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                                  onPressed: () => _confirmDelete(report),
+                                ),
+                              ]
                             ],
-                          )
-                              : null,
+                          ),
                         ),
                         if (report.imagePath != null && report.imagePath!.isNotEmpty)
                           GestureDetector(
@@ -755,6 +811,17 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                 retinaMode: true,
               ),
 
+              if (_routePoints.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _routePoints,
+                      strokeWidth: 5.0,
+                      color: Colors.blueAccent, // Màu xanh của đường đi
+                    ),
+                  ],
+                ),
+
               // Vòng tròn bán kính
               CircleLayer(
                 circles: _reports.map((report) {
@@ -828,6 +895,17 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
             ],
           ),
           // (Kết thúc FlutterMap ở đây)
+
+          if (_routePoints.isNotEmpty)
+            Positioned(
+              top: 130,
+              right: 15,
+              child: FloatingActionButton.small(
+                onPressed: _clearRoute,
+                backgroundColor: Colors.white,
+                child: const Icon(Icons.close, color: Colors.red),
+              ),
+            ),
 
           // --- LỚP 2: THANH TÌM KIẾM ---
           Positioned(

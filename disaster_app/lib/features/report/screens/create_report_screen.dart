@@ -199,7 +199,13 @@ class _CreateReportScreenState extends State<CreateReportScreen> {
             DropdownButton<DisasterType>(
               value: _selectedType,
               isExpanded: true,
-              items: DisasterType.values.map((type) => DropdownMenuItem(value: type, child: Text(type.name.toUpperCase()))).toList(),
+              items: DisasterType.values
+                  .where((type) => type != DisasterType.sos)
+                  .map((type) => DropdownMenuItem(
+                value: type,
+                child: Text(type.toVietnamese()),
+              ))
+                  .toList(),
               onChanged: (value) => setState(() => _selectedType = value!),
             ),
             const SizedBox(height: 20),

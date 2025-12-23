@@ -8,20 +8,36 @@ import '../../auth/models/user_model.dart';
 import 'package:flutter/foundation.dart';
 import 'package:disaster_app/api_config.dart';
 
+// 👇 1. THÊM IMPORT NÀY
+import '../../auth/services/auth_service.dart';
+
 class DisasterService {
   static String get baseUrl => '${ApiConfig.baseUrl}/reports';
 
-  // 1. Lấy danh sách báo cáo từ Server
+  // 👇 2. KHỞI TẠO AUTH SERVICE
+  final AuthService _authService = AuthService();
+
+  // 👇 3. VIẾT HÀM LẤY HEADER (CÓ TOKEN)
+  Future<Map<String, String>> _getHeaders() async {
+    final token = await _authService.getToken(); // Lấy token từ bộ nhớ
+    return {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token', // Kẹp token vào đây
+    };
+  }
+
+  // 4. SỬA HÀM fetchReports
   Future<List<DisasterReport>> fetchReports() async {
     try {
-      final response = await http.get(Uri.parse(baseUrl));
+      // 👇 Dùng _getHeaders() thay vì gọi trần
+      final headers = await _getHeaders();
+      final response = await http.get(Uri.parse(baseUrl), headers: headers);
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
 
-        // Chuyển đổi JSON từ Server thành List<DisasterReport> của Flutter
         return data.map((json) => DisasterReport(
-          id: json['_id'], // MongoDB dùng _id thay vì id
+          id: json['_id'],
           title: json['title'],
           description: json['description'] ?? '',
           type: _parseType(json['type']),
@@ -35,19 +51,22 @@ class DisasterService {
           userId: json['userId'] ?? '',
           userName: json['userName'],
         )).toList();
+      } else if (response.statusCode == 401) {
+        // Nếu Token hết hạn -> Đăng xuất (Tùy chọn)
+        print("Token hết hạn!");
+        return [];
       } else {
         throw Exception('Không tải được dữ liệu');
       }
     } catch (e) {
       print("Lỗi gọi API: $e");
-      return []; // Trả về rỗng nếu lỗi để App không bị chết
+      return [];
     }
   }
 
-  // 2. Gửi báo cáo mới lên Server
+  // 5. SỬA HÀM createReport
   Future<bool> createReport(DisasterReport report) async {
     try {
-      // 1. LẤY THÔNG TIN USER ĐANG ĐĂNG NHẬP
       final prefs = await SharedPreferences.getInstance();
       final String? userData = prefs.getString('user_data');
       String currentUserId = "anonymous";
@@ -55,14 +74,16 @@ class DisasterService {
 
       if (userData != null) {
         final userMap = json.decode(userData);
-        currentUserId = userMap['_id'] ?? userMap['phone']; // Lấy ID hoặc SĐT
+        currentUserId = userMap['_id'] ?? userMap['phone'];
         currentUserName = userMap['name'];
       }
 
-      // 2. GỬI KÈM USER ID LÊN SERVER
+      // 👇 Dùng _getHeaders()
+      final headers = await _getHeaders();
+
       final response = await http.post(
         Uri.parse(baseUrl),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers, // <--- Đã thay thế header cứng
         body: json.encode({
           'title': report.title,
           'description': report.description,
@@ -73,8 +94,6 @@ class DisasterService {
           },
           'radius': report.radius,
           'imagePath': report.imagePath,
-
-          // --- THÊM 2 DÒNG NÀY ---
           'userId': currentUserId,
           'userName': currentUserName,
         }),
@@ -87,13 +106,19 @@ class DisasterService {
     }
   }
 
-
+  // 6. SỬA HÀM deleteReport
   Future<bool> deleteReport(String id) async {
     try {
-      final response = await http.delete(Uri.parse('$baseUrl/$id'));
+      // 👇 Dùng _getHeaders()
+      final headers = await _getHeaders();
+
+      final response = await http.delete(
+          Uri.parse('$baseUrl/$id'),
+          headers: headers // <--- Thêm header vào lệnh xóa
+      );
 
       if (response.statusCode == 200) {
-        return true; // Xóa thành công
+        return true;
       } else {
         return false;
       }
@@ -103,12 +128,15 @@ class DisasterService {
     }
   }
 
-  // 4. Cập nhật báo cáo
+  // 7. SỬA HÀM updateReport
   Future<bool> updateReport(DisasterReport report) async {
     try {
+      // 👇 Dùng _getHeaders()
+      final headers = await _getHeaders();
+
       final response = await http.put(
-        Uri.parse('$baseUrl/${report.id}'), // Gọi vào đúng ID cần sửa
-        headers: {'Content-Type': 'application/json'},
+        Uri.parse('$baseUrl/${report.id}'),
+        headers: headers, // <--- Thay thế header cứng
         body: json.encode({
           'title': report.title,
           'description': report.description,
@@ -118,23 +146,21 @@ class DisasterService {
             'longitude': report.location.longitude,
           },
           'radius': report.radius,
-           'imagePath': report.imagePath
+          'imagePath': report.imagePath
         }),
       );
 
-      return response.statusCode == 200; // 200 OK là thành công
+      return response.statusCode == 200;
     } catch (e) {
       print("Lỗi cập nhật báo cáo: $e");
       return false;
     }
   }
 
-
+  // Hàm upload ảnh giữ nguyên (Cloudinary không cần JWT của server mình)
   Future<String?> uploadImageToCloud(File imageFile) async {
     try {
-      // Tên Cloud lấy từ ảnh bạn gửi
       const cloudName = "dqz4kwlgq";
-      // Tên Preset bạn vừa tạo ở BƯỚC 1 (nếu đặt tên khác thì sửa ở đây)
       const uploadPreset = "disaster_upload";
 
       final url = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
@@ -149,7 +175,7 @@ class DisasterService {
         final responseData = await response.stream.toBytes();
         final responseString = String.fromCharCodes(responseData);
         final jsonMap = jsonDecode(responseString);
-        return jsonMap['secure_url']; // Trả về link ảnh online (https://...)
+        return jsonMap['secure_url'];
       } else {
         print('Lỗi upload ảnh Cloudinary: ${response.statusCode}');
         return null;
@@ -160,7 +186,6 @@ class DisasterService {
     }
   }
 
-  // Hàm phụ: Chuyển chuỗi từ Server thành Enum
   DisasterType _parseType(String typeString) {
     return DisasterType.values.firstWhere(
           (e) => e.name == typeString,

@@ -2,23 +2,40 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
+import 'package:disaster_app/api_config.dart'; // Import config của bạn
 
-// ⚠️ QUAN TRỌNG: Hãy chắc chắn bạn đã import đúng file api_config.dart
-// Nếu dòng dưới bị đỏ, hãy xóa đi và gõ lại "ApiConfig" để VS Code gợi ý import đúng.
-import 'package:disaster_app/api_config.dart';
 class AuthService {
-
-  // --- SỬA ĐỔI QUAN TRỌNG TẠI ĐÂY ---
-  // Không dùng link cứng IP 172... nữa.
-  // Lấy link từ ApiConfig (nó sẽ tự biết khi nào dùng Render, khi nào dùng Local)
+  // Lấy link từ ApiConfig
   static String get baseUrl => '${ApiConfig.baseUrl}/auth';
 
-  // 1. Đăng ký
+  // Key để lưu token vào bộ nhớ máy
+  static const String _tokenKey = 'jwt_token';
+
+  // --- 1. CÁC HÀM QUẢN LÝ TOKEN (MỚI THÊM) ---
+
+  // Lưu Token
+  Future<void> saveToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_tokenKey, token);
+  }
+
+  // Lấy Token (Để kẹp vào Header gọi API)
+  Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_tokenKey);
+  }
+
+  // Xóa Token (Đăng xuất)
+  Future<void> removeToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_tokenKey);
+  }
+
+  // --- 2. CÁC HÀM API ---
+
+  // Đăng ký
   Future<bool> register(String name, String phone, String password) async {
     try {
-      // In ra để kiểm tra xem nó đang gọi vào đâu
-      print("Đang đăng ký tại: $baseUrl/register");
-
       final response = await http.post(
         Uri.parse('$baseUrl/register'),
         headers: {'Content-Type': 'application/json'},
@@ -31,11 +48,9 @@ class AuthService {
     }
   }
 
-  // 2. Đăng nhập
+  // Đăng nhập (ĐÃ SỬA ĐỂ LƯU TOKEN)
   Future<User?> login(String phone, String password) async {
     try {
-      print("Đang đăng nhập tại: $baseUrl/login");
-
       final response = await http.post(
         Uri.parse('$baseUrl/login'),
         headers: {'Content-Type': 'application/json'},
@@ -43,11 +58,22 @@ class AuthService {
       );
 
       if (response.statusCode == 200) {
+        print("Server Response: ${response.body}");
         final data = json.decode(response.body);
-        final user = User.fromJson(data);
 
-        await _saveUserToLocal(user);
-        return user;
+        // 1. Trích xuất và Lưu Token (Quan trọng nhất)
+        // Giả sử server trả về JSON dạng: { "token": "...", "user": {...} }
+        // Hoặc nếu token nằm phẳng cùng user: { "token": "...", "name": "...", ... }
+        if (data['token'] != null) {
+          await saveToken(data['token']);
+        }
+
+        // 2. Lưu thông tin User như cũ
+        if (data['user'] != null) {
+          final user = User.fromJson(data['user']);
+          await _saveUserToLocal(user);
+          return user;
+        }
       }
       return null;
     } catch (e) {
@@ -56,13 +82,14 @@ class AuthService {
     }
   }
 
-  // 3. Đăng xuất (Giữ nguyên)
+  // Đăng xuất (ĐÃ SỬA)
   Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('user_data');
+    await prefs.remove('user_data'); // Xóa user
+    await removeToken(); // Xóa token
   }
 
-  // 4. Lấy thông tin (Giữ nguyên)
+  // Lấy user hiện tại
   Future<User?> getCurrentUser() async {
     final prefs = await SharedPreferences.getInstance();
     final String? userData = prefs.getString('user_data');
@@ -72,7 +99,6 @@ class AuthService {
     return null;
   }
 
-  // Hàm phụ (Giữ nguyên)
   Future<void> _saveUserToLocal(User user) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user_data', json.encode(user.toJson()));

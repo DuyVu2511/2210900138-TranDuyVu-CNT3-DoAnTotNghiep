@@ -1,28 +1,30 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
-const bcrypt = require('bcryptjs'); // 1. Import thư viện mã hóa
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken'); // 1. IMPORT THƯ VIỆN JWT (Mới thêm)
 
-// 1. API ĐĂNG KÝ (CÓ MÃ HÓA)
+// KHÓA BÍ MẬT (Dùng để ký tên vào Token, đừng để lộ ra ngoài)
+const JWT_SECRET = 'khoa_bi_mat_doan_tot_nghiep_2025';
+
+// 1. API ĐĂNG KÝ
 router.post('/register', async (req, res) => {
   try {
     const { phone, password, name } = req.body;
 
-    // Kiểm tra trùng lặp
     const existingUser = await User.findOne({ phone });
     if (existingUser) {
       return res.status(400).json({ message: "Số điện thoại này đã được đăng ký!" });
     }
 
-    // 2. MÃ HÓA MẬT KHẨU TRƯỚC KHI LƯU
-    const salt = await bcrypt.genSalt(10); // Tạo chuỗi ngẫu nhiên (muối)
-    const hashedPassword = await bcrypt.hash(password, salt); // Trộn mật khẩu với muối
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Lưu vào DB (lưu mật khẩu đã mã hóa, không lưu mật khẩu thật)
     const newUser = new User({
         phone,
-        password: hashedPassword, // <--- Lưu cái này
-        name
+        password: hashedPassword,
+        name,
+        role: 'user' // Mặc định là user thường
     });
 
     await newUser.save();
@@ -33,7 +35,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// 2. API ĐĂNG NHẬP (SO SÁNH MÃ HÓA)
+// 2. API ĐĂNG NHẬP (QUAN TRỌNG: ĐÃ SỬA ĐỂ TRẢ VỀ TOKEN)
 router.post('/login', async (req, res) => {
   try {
     const { phone, password } = req.body;
@@ -44,19 +46,35 @@ router.post('/login', async (req, res) => {
       return res.status(404).json({ message: "Tài khoản không tồn tại!" });
     }
 
-    // 3. SO SÁNH MẬT KHẨU NHẬP VÀO VỚI MẬT KHẨU MÃ HÓA TRONG DB
-    // (Không được so sánh === trực tiếp nữa)
+    // So sánh mật khẩu
     const isMatch = await bcrypt.compare(password, user.password);
-
     if (!isMatch) {
       return res.status(400).json({ message: "Sai mật khẩu!" });
     }
 
-    // Trả về user (nhưng đừng trả về password)
-    const userResponse = user.toObject();
-    delete userResponse.password; // Xóa field password khỏi kết quả trả về cho an toàn
+    // --- BẮT ĐẦU PHẦN JWT (MỚI THÊM) ---
 
-    res.json(userResponse);
+    // Tạo Payload (Dữ liệu muốn giấu trong token)
+    const payload = {
+        id: user._id,
+        role: user.role || 'user'
+    };
+
+    // Ký tên tạo Token (Hết hạn sau 30 ngày)
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
+
+    // --- KẾT THÚC PHẦN JWT ---
+
+    // Xóa password trước khi trả về
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    // TRẢ VỀ CẢ USER VÀ TOKEN
+    res.json({
+        token: token,      // <--- ĐÂY LÀ CÁI FLUTTER CẦN
+        user: userResponse
+    });
+
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

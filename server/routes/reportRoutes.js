@@ -1,15 +1,16 @@
 const express = require('express');
 const router = express.Router();
-const Report = require('../models/Report');
+const Report = require('../models/Report'); // Đảm bảo đường dẫn đúng
 const cloudinary = require('cloudinary').v2;
 
+// Cấu hình Cloudinary (Giữ nguyên key của bạn)
 cloudinary.config({
   cloud_name: 'dqz4kwlgq',
   api_key: '864719659715351',
   api_secret: 'jol9YIlFLg4ocAhXjSlTe5_mwMY'
 });
 
-// 1. API: Lấy tất cả báo cáo (Sắp xếp mới nhất lên đầu)
+// 1. API: Lấy tất cả báo cáo (Mới nhất lên đầu)
 // GET: http://localhost:3000/api/reports
 router.get('/', async (req, res) => {
   try {
@@ -33,42 +34,36 @@ router.post('/', async (req, res) => {
   }
 });
 
-// 3. API: Xóa báo cáo.
+// 3. API: Xóa báo cáo (Kèm xóa ảnh trên Cloudinary)
+// DELETE: http://localhost:3000/api/reports/:id
 router.delete('/:id', async (req, res) => {
   try {
-    // A. Tìm báo cáo trước
+    // A. Tìm báo cáo trước để lấy link ảnh
     const report = await Report.findById(req.params.id);
     if (!report) {
       return res.status(404).json({ message: "Không tìm thấy báo cáo" });
     }
 
-    // B. Nếu có ảnh -> Xóa trên Cloudinary
+    // B. Nếu có ảnh -> Xóa trên Cloudinary để tiết kiệm bộ nhớ
     if (report.imagePath && report.imagePath.includes('cloudinary')) {
       try {
         console.log("Đang xóa ảnh:", report.imagePath);
 
-        // --- CÔNG THỨC TÁCH ID CHUẨN XÁC ---
-        // Lấy tất cả ký tự nằm sau chữ 'upload/' (và bỏ qua đoạn v12345/ nếu có) cho đến dấu chấm .jpg
-        // Ví dụ: .../upload/v171234/disaster_upload/abc.jpg -> Lấy "disaster_upload/abc"
+        // Regex tách Public ID từ link ảnh
         const regex = /\/upload\/(?:v\d+\/)?(.+)\.[^.]+$/;
         const match = report.imagePath.match(regex);
 
         if (match && match[1]) {
             const publicId = match[1];
-            console.log("Public ID tìm được:", publicId);
-
-            // Gọi lệnh xóa
-            const result = await cloudinary.uploader.destroy(publicId);
-            console.log("Kết quả Cloudinary:", result); // Nếu hiện { result: 'ok' } là ngon
-        } else {
-            console.log("❌ Không tách được ID từ link này.");
+            await cloudinary.uploader.destroy(publicId);
+            console.log("Đã xóa ảnh trên Cloudinary:", publicId);
         }
       } catch (err) {
-        console.log("❌ Lỗi xóa ảnh Cloud:", err);
+        console.log("Lỗi xóa ảnh (không ảnh hưởng việc xóa bài):", err);
       }
     }
 
-    // C. Xóa trong MongoDB
+    // C. Xóa báo cáo trong Database
     await Report.findByIdAndDelete(req.params.id);
 
     res.json({ message: "Đã xóa báo cáo và ảnh thành công!" });
@@ -77,13 +72,13 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// 4. API: Cập nhật báo cáo
+// 4. API: Cập nhật báo cáo (Dùng cho Admin sửa nội dung hoặc App sửa bài)
 // PUT: http://localhost:3000/api/reports/:id
 router.put('/:id', async (req, res) => {
   try {
     const updatedReport = await Report.findByIdAndUpdate(
       req.params.id,
-      req.body, // Dữ liệu mới gửi lên
+      req.body, // Dữ liệu mới gửi lên (VD: { title: 'Sửa lại', status: 'resolved' })
       { new: true } // Trả về dữ liệu mới sau khi sửa
     );
 
@@ -97,6 +92,5 @@ router.put('/:id', async (req, res) => {
     res.status(400).json({ message: err.message });
   }
 });
-
 
 module.exports = router;

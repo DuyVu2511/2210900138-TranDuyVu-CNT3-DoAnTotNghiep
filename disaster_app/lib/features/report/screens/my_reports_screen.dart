@@ -124,8 +124,8 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                       clipBehavior: Clip.antiAlias,
                       child: (report.imagePath != null && report.imagePath!.isNotEmpty)
                           ? Image.network(report.imagePath!, fit: BoxFit.cover,
-                          errorBuilder: (_,__,___) => Icon(report.getIcon(), color: report.getColor()))
-                          : Icon(report.getIcon(), color: report.getColor(), size: 30),
+                          errorBuilder: (_,__,___) => Icon(report.getIcon(), color: report.getTypeColor()))
+                          : Icon(report.getIcon(), color: report.getTypeColor(), size: 30),
                     ),
                     const SizedBox(width: 15),
 
@@ -148,12 +148,12 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
-                              color: report.getColor().withOpacity(0.1),
+                              color: report.getTypeColor().withOpacity(0.1),
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
                               report.type.toVietnamese(),
-                              style: TextStyle(color: report.getColor(), fontSize: 10, fontWeight: FontWeight.bold),
+                              style: TextStyle(color: report.getTypeColor(), fontSize: 10, fontWeight: FontWeight.bold),
                             ),
                           ),
                         ],

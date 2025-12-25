@@ -66,10 +66,10 @@ class _AlertListScreenState extends State<AlertListScreen> {
                     leading: Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: report.getColor().withOpacity(0.1),
+                        color: report.getTypeColor().withOpacity(0.1),
                         shape: BoxShape.circle,
                       ),
-                      child: Icon(report.getIcon(), color: report.getColor()),
+                      child: Icon(report.getIcon(), color: report.getTypeColor()),
                     ),
                     title: Text(report.title, style: const TextStyle(fontWeight: FontWeight.bold)),
                     subtitle: Column(

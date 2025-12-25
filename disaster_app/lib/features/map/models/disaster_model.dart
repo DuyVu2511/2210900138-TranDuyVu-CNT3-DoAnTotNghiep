@@ -56,7 +56,7 @@ class DisasterReport {
   });
 
   // Helper: Lấy màu sắc theo loại
-  Color getColor() {
+  Color getTypeColor() {
     switch (type) {
       case DisasterType.flood: return Colors.blue;
       case DisasterType.fire: return Colors.red;

@@ -6,9 +6,11 @@ import 'package:location/location.dart' as location_pkg;
 import 'package:geocoding/geocoding.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'dart:io';
 import 'dart:convert';
+import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // --- CÁC IMPORT CẦN THIẾT ---
@@ -22,6 +24,7 @@ import '../services/weather_service.dart';
 import '../../report/screens/my_reports_screen.dart';
 import '../../auth/models/user_model.dart';   // <--- QUAN TRỌNG: Để dùng object User
 import '../../auth/services/auth_service.dart'; // <--- QUAN TRỌNG: Để lấy quyền Admin
+import '../../../utils/event_bus.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -32,6 +35,7 @@ class MapScreen extends StatefulWidget {
 
 class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin, TickerProviderStateMixin {
   DisasterType? _selectedType;
+  StreamSubscription? _refreshSubscription;
 
   // Lọc danh sách theo loại thiên tai
   List<DisasterReport> get _filteredReports {
@@ -70,6 +74,18 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
     _loadCurrentUser();
     _loadReports();
     _myLocation();
+    _refreshSubscription = EventBus.onRefreshMap.listen((_) {
+      print("Map đã nhận tín hiệu đổi tên -> Đang tự động tải lại...");
+      _loadCurrentUser(); // Lấy lại tên mới
+      _loadReports();     // Lấy lại danh sách báo cáo
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshSubscription?.cancel();
+    _mapController.dispose();
+    super.dispose();
   }
 
   // ✅ HÀM LẤY USER MỚI (GỌI AUTH SERVICE)
@@ -271,26 +287,53 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
   Future<void> _myLocation() async {
     setState(() => _isLocating = true);
     try {
-      location_pkg.Location location = location_pkg.Location();
-      bool serviceEnabled = await location.serviceEnabled();
-      if (!serviceEnabled) {
-        serviceEnabled = await location.requestService();
+      // --- [QUAN TRỌNG] TÁCH RIÊNG XỬ LÝ CHO WEB VÀ APP ---
+
+      // NẾU LÀ APP (ANDROID/IOS)
+      if (!kIsWeb) {
+        // Chỉ App mới cần kiểm tra service GPS bật hay chưa
+        location_pkg.Location location = location_pkg.Location();
+        bool serviceEnabled = await location.serviceEnabled();
         if (!serviceEnabled) {
-          setState(() => _isLocating = false);
-          return;
+          serviceEnabled = await location.requestService();
+          if (!serviceEnabled) {
+            setState(() => _isLocating = false);
+            return;
+          }
+        }
+
+        // Kiểm tra quyền theo kiểu của gói 'location' (để kích hoạt popup tốt hơn trên Android)
+        location_pkg.PermissionStatus permissionGranted = await location.hasPermission();
+        if (permissionGranted == location_pkg.PermissionStatus.denied) {
+          permissionGranted = await location.requestPermission();
+          if (permissionGranted != location_pkg.PermissionStatus.granted) {
+            setState(() => _isLocating = false);
+            return;
+          }
         }
       }
 
-      location_pkg.PermissionStatus permissionGranted = await location.hasPermission();
-      if (permissionGranted == location_pkg.PermissionStatus.denied) {
-        permissionGranted = await location.requestPermission();
-        if (permissionGranted != location_pkg.PermissionStatus.granted) {
-          setState(() => _isLocating = false);
-          return;
+      // NẾU LÀ WEB (HOẶC APP ĐÃ QUA BƯỚC TRÊN)
+      // Dùng Geolocator để lấy vị trí (Thằng này chạy Web rất mượt)
+      else {
+        // Kiểm tra quyền trên Web
+        LocationPermission permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied) {
+          permission = await Geolocator.requestPermission();
+          if (permission == LocationPermission.denied) {
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Bạn từ chối quyền, không định vị được!")));
+            setState(() => _isLocating = false);
+            return;
+          }
         }
       }
 
-      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      // --- ĐOẠN LẤY VỊ TRÍ (CHUNG CHO CẢ 2) ---
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high, // Yêu cầu độ chính xác cao nhất
+        timeLimit: const Duration(seconds: 10), // Chờ tối đa 10s để bắt sóng
+      );
+
       if (mounted) {
         setState(() {
           _currentPosition = LatLng(position.latitude, position.longitude);
@@ -300,7 +343,9 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
         _fetchWeather(_currentPosition!);
       }
     } catch (e) {
-      debugPrint("Lỗi: $e");
+      debugPrint("Lỗi định vị: $e");
+      // Trên web đôi khi lỗi Timeout, hãy thử lại
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Lỗi: $e")));
       setState(() => _isLocating = false);
     }
   }

@@ -11,6 +11,20 @@ class User {
     required this.role,
   });
 
+  User copyWith({
+    String? id,
+    String? name,
+    String? phone,
+    String? role,
+  }) {
+    return User(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      phone: phone ?? this.phone,
+      role: role ?? this.role,
+    );
+  }
+
   // Chuyển từ JSON (Server trả về) -> Object
   factory User.fromJson(Map<String, dynamic> json) {
     return User(

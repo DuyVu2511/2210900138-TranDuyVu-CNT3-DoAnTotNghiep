@@ -4,6 +4,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const authRoutes = require('./routes/authRoutes');
 const reportRoutes = require('./routes/reportRoutes'); // Import ở trên cùng cho gọn
+const userRoute = require('./routes/userRoutes');
 
 const app = express();
 
@@ -28,6 +29,7 @@ mongoose.connect(mongoURI)
 // Sử dụng Routes
 app.use('/api/reports', reportRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoute);
 
 // Route kiểm tra server
 app.get('/', (req, res) => {

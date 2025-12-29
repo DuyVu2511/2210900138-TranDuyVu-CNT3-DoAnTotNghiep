@@ -103,4 +103,77 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user_data', json.encode(user.toJson()));
   }
+
+  // Hàm gọi API đổi tên
+  Future<bool> updateUserName(String userId, String newName) async {
+    try {
+      final url = Uri.parse('${ApiConfig.baseUrl}/users/$userId');
+
+      final token = await getToken();
+
+      final response = await http.put(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+        body: json.encode({'name': newName}),
+      );
+
+      if (response.statusCode == 200) {
+        // Cập nhật lại SharedPreferences để lần sau vào app tên vẫn đúng
+        final prefs = await SharedPreferences.getInstance();
+        final userDataString = prefs.getString('user_data');
+        if (userDataString != null) {
+          final userData = json.decode(userDataString);
+          userData['name'] = newName; // Sửa tên trong bộ nhớ máy
+          await prefs.setString('user_data', json.encode(userData));
+        }
+        return true;
+      }
+      return false;
+    } catch (e) {
+      print("Lỗi đổi tên: $e");
+      return false;
+    }
+  }
+
+  // --- HÀM ĐỔI MẬT KHẨU (GỌI API NODEJS) ---
+  Future<bool> changePassword(String oldPassword, String newPassword) async {
+    try {
+      final url = Uri.parse('$baseUrl/change-password'); // Đảm bảo baseUrl trỏ đúng file router kia
+
+      // Lấy token đang lưu trong máy
+      final token = await getToken();
+
+      if (token == null) {
+        print("Lỗi: Không tìm thấy token (chưa đăng nhập)");
+        return false;
+      }
+
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token', // Gửi token để Server biết ai đang đổi
+        },
+        body: json.encode({
+          'oldPassword': oldPassword,
+          'newPassword': newPassword,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return true; // Đổi thành công
+      } else {
+        // In ra lỗi từ server (ví dụ: "Mật khẩu cũ không đúng")
+        print("Lỗi server: ${response.body}");
+        return false;
+      }
+    } catch (e) {
+      print("Lỗi kết nối đổi pass: $e");
+      return false;
+    }
+  }
+
 }

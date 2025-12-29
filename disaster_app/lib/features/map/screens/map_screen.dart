@@ -550,11 +550,27 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                             child: Icon(report.getIcon(), color: report.getTypeColor()),
                           ),
                           title: Text(report.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text(
-                            "${report.type.toVietnamese()} • ${report.userName ?? 'Ẩn danh'}",
-                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // 1. Dòng Loại thiên tai • Người đăng (Cũ)
+                              Text(
+                                "${report.type.toVietnamese()} • ${report.userName ?? 'Ẩn danh'}",
+                                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                              ),
+
+                              // 2. Dòng Mô tả chi tiết (Mới)
+                              if (report.description.isNotEmpty) ...[
+                                const SizedBox(height: 4), // Cách ra một chút
+                                Text(
+                                  "Mô tả: ${report.description}",
+                                  style: const TextStyle(fontSize: 14, color: Colors.black87),
+                                  maxLines: 3, // Hiện tối đa 3 dòng
+                                  overflow: TextOverflow.ellipsis, // Dài quá thì hiện dấu ...
+                                ),
+                              ]
+                            ],
                           ),
-                          // Đã bỏ nút chỉ đường ở đây để đưa xuống dưới
                         ),
 
                         if (report.imagePath != null && report.imagePath!.isNotEmpty)
@@ -683,7 +699,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
               minZoom: 3.0,
               maxZoom: 18.0,
               backgroundColor: Colors.grey[200]!,
-              interactionOptions: const InteractionOptions(flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom | InteractiveFlag.doubleTapZoom),
+              interactionOptions: const InteractionOptions(flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom | InteractiveFlag.doubleTapZoom | InteractiveFlag.scrollWheelZoom),
               onTap: (_, __) { FocusScope.of(context).unfocus(); },
             ),
             children: [

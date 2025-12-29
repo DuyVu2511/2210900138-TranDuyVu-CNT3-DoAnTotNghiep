@@ -330,8 +330,8 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
 
       // --- ĐOẠN LẤY VỊ TRÍ (CHUNG CHO CẢ 2) ---
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high, // Yêu cầu độ chính xác cao nhất
-        timeLimit: const Duration(seconds: 10), // Chờ tối đa 10s để bắt sóng
+        desiredAccuracy: kIsWeb ? LocationAccuracy.low : LocationAccuracy.high, // Web thì lấy thấp thôi
+        timeLimit: const Duration(seconds: 10), // Chờ 10s
       );
 
       if (mounted) {
@@ -659,14 +659,22 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
     final List<DisasterReport> sosReports = _reports.where((r) => r.type == DisasterType.sos).toList();
     final List<DisasterReport> regularReports = _reports.where((r) => r.type != DisasterType.sos).toList();
 
+    // KIỂM TRA: Đang chạy trên Web hay Mobile?
+    final bool isWebLayout = kIsWeb;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Cảnh báo thiên tai'),
         backgroundColor: Colors.blueAccent,
         foregroundColor: Colors.white,
+        // Trên web có thể ẩn nút back nếu không cần thiết
+        automaticallyImplyLeading: !isWebLayout,
       ),
       body: Stack(
         children: [
+          // ---------------------------------------------------------
+          // 1. LỚP BẢN ĐỒ (NỀN - GIỮ NGUYÊN CHO CẢ 2)
+          // ---------------------------------------------------------
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
@@ -692,7 +700,6 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                   point: r.location,
                   radius: r.radius,
                   useRadiusInMeter: true,
-                  // ✅ SỬA: getTypeColor()
                   color: r.getTypeColor().withOpacity(0.2),
                   borderColor: r.getTypeColor().withOpacity(0.6),
                   borderStrokeWidth: 1.5,
@@ -716,84 +723,101 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
             ],
           ),
 
+          // Nút tắt chỉ đường (Logic chung)
           if (_routePoints.isNotEmpty)
-            Positioned(top: 190, right: 15, child: FloatingActionButton.small(onPressed: _clearRoute, backgroundColor: Colors.white, child: const Icon(Icons.close, color: Colors.red))),
-
-          Positioned(
-            top: 10, left: 15, right: 15,
-            child: Container(
-              decoration: BoxDecoration(color: Colors.white.withOpacity(0.95), borderRadius: BorderRadius.circular(30), boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))]),
-              child: TextField(
-                controller: _searchController,
-                textInputAction: TextInputAction.search,
-                onSubmitted: (_) => _searchPlace(),
-                decoration: InputDecoration(
-                  hintText: "Tìm kiếm (VD: Hà Nội...)",
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                  prefixIcon: const Icon(Icons.search, color: Colors.blueAccent),
-                  suffixIcon: _isSearchingAddress ? const Padding(padding: EdgeInsets.all(12.0), child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))) : IconButton(icon: const Icon(Icons.clear, color: Colors.grey), onPressed: () { _searchController.clear(); setState(() => _searchResultLocation = null); FocusScope.of(context).unfocus(); }),
-                ),
-              ),
+            Positioned(
+                top: isWebLayout ? 150 : 190, // Web thì để cao hơn chút
+                right: 15,
+                child: FloatingActionButton.small(onPressed: _clearRoute, backgroundColor: Colors.white, child: const Icon(Icons.close, color: Colors.red))
             ),
-          ),
 
-          Positioned(
-            top: 70, left: 0, right: 0,
-            child: SizedBox(
-              height: 40,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 15),
+          // ---------------------------------------------------------
+          // 2. KHU VỰC TÌM KIẾM & BỘ LỌC (PHÂN LUỒNG APP/WEB)
+          // ---------------------------------------------------------
+          // Nếu là WEB: Căn giữa màn hình
+          if (isWebLayout)
+            Positioned(
+              top: 20, left: 0, right: 0, // Neo top, full ngang
+              child: Column( // Dùng Column để xếp Tìm kiếm trên, Lọc dưới
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: const Text("Tất cả"),
-                      selected: _selectedType == null,
-                      onSelected: (bool selected) { setState(() => _selectedType = null); },
-                      selectedColor: Colors.blueAccent,
-                      backgroundColor: Colors.white,
-                      labelStyle: TextStyle(color: _selectedType == null ? Colors.white : Colors.black),
-                      elevation: 3,
+                  // Thanh tìm kiếm Web (Rộng tối đa 600)
+                  Container(
+                    width: 600,
+                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.95), borderRadius: BorderRadius.circular(30), boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))]),
+                    child: _buildSearchField(), // (Đã tách hàm bên dưới cho gọn)
+                  ),
+                  const SizedBox(height: 15),
+                  // Thanh bộ lọc Web (Rộng tối đa 800)
+                  SizedBox(
+                    height: 40, width: 800,
+                    child: Center( // Căn giữa các chip
+                      child: _buildFilterList(), // (Đã tách hàm)
                     ),
                   ),
-                  ...DisasterType.values.map((type) {
-                    if (type == DisasterType.sos) return const SizedBox();
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(type.toVietnamese()),
-                        selected: _selectedType == type,
-                        onSelected: (bool selected) { setState(() => _selectedType = selected ? type : null); },
-                        selectedColor: Colors.blueAccent,
-                        backgroundColor: Colors.white,
-                        labelStyle: TextStyle(color: _selectedType == type ? Colors.white : Colors.black),
-                        elevation: 3,
-                      ),
-                    );
-                  }).toList(),
                 ],
               ),
+            )
+          // Nếu là MOBILE: Giữ nguyên vị trí cũ (Positioned)
+          else ...[
+            Positioned(
+              top: 10, left: 15, right: 15,
+              child: Container(
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.95), borderRadius: BorderRadius.circular(30), boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))]),
+                child: _buildSearchField(),
+              ),
             ),
-          ),
+            Positioned(
+              top: 70, left: 0, right: 0,
+              child: SizedBox(
+                height: 40,
+                child: _buildFilterList(),
+              ),
+            ),
+          ],
 
+          // ---------------------------------------------------------
+          // 3. CÁC NÚT CHỨC NĂNG (History, SOS, Weather)
+          // ---------------------------------------------------------
+
+          // Nút Lịch sử:
+          // Mobile: Top 120, Left 15.
+          // Web: Top 20, Left 20 (Góc trái trên cùng cho thoáng)
           Positioned(
-            top: 120, left: 15,
+            top: isWebLayout ? 20 : 120,
+            left: isWebLayout ? 20 : 15,
             child: GestureDetector(
               onTap: () async {
                 await Navigator.push(context, MaterialPageRoute(builder: (context) => const MyReportsScreen()));
                 _loadReports();
               },
-              child: Container(padding: const EdgeInsets.all(10), decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 5)]), child: const Icon(Icons.history, color: Colors.blueAccent)),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 5)]),
+                child: const Icon(Icons.history, color: Colors.blueAccent),
+                // Tooltip cho Web dễ dùng hơn
+              ),
             ),
           ),
 
-          Positioned(top: 180, left: 15, child: Material(color: Colors.transparent, child: SosButton(onSosPressed: _sendSosSignal))),
-          Positioned(top: 120, right: 05, child: GestureDetector(onTap: _showWeatherDetail, child: WeatherCard(weatherData: _weatherInfo))),
+          // Nút SOS:
+          // Mobile: Top 180 (dưới nút lịch sử).
+          // Web: Bottom 30, Left 30 (Góc trái dưới cùng - Vị trí chiến lược)
+          isWebLayout
+              ? Positioned(bottom: 30, left: 30, child: Material(color: Colors.transparent, child: SosButton(onSosPressed: _sendSosSignal)))
+              : Positioned(top: 180, left: 15, child: Material(color: Colors.transparent, child: SosButton(onSosPressed: _sendSosSignal))),
+
+          // Thời tiết:
+          // Mobile: Top 120, Right 05.
+          // Web: Top 20, Right 20 (Góc phải trên cùng)
+          Positioned(
+              top: isWebLayout ? 20 : 120,
+              right: isWebLayout ? 20 : 5,
+              child: GestureDetector(onTap: _showWeatherDetail, child: WeatherCard(weatherData: _weatherInfo))
+          ),
         ],
       ),
 
+      // 4. FLOATING BUTTON (Góc phải dưới cùng)
       floatingActionButton: Column(
         mainAxisAlignment: MainAxisAlignment.end,
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -803,6 +827,8 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
             mini: true,
             onPressed: _isLocating ? null : _myLocation,
             backgroundColor: Colors.white,
+            // Thêm Tooltip cho Web
+            tooltip: "Vị trí của tôi",
             child: _isLocating ? const Padding(padding: EdgeInsets.all(8.0), child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.my_location, color: Colors.blue),
           ),
           const SizedBox(height: 10),
@@ -822,6 +848,63 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
           ),
         ],
       ),
+    );
+  }
+
+  // --- HÀM TÁCH RIÊNG (để code đỡ rối) ---
+
+  Widget _buildSearchField() {
+    return TextField(
+      controller: _searchController,
+      textInputAction: TextInputAction.search,
+      onSubmitted: (_) => _searchPlace(),
+      decoration: InputDecoration(
+        hintText: "Tìm kiếm (VD: Hà Nội...)",
+        border: InputBorder.none,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        prefixIcon: const Icon(Icons.search, color: Colors.blueAccent),
+        suffixIcon: _isSearchingAddress
+            ? const Padding(padding: EdgeInsets.all(12.0), child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)))
+            : IconButton(icon: const Icon(Icons.clear, color: Colors.grey), onPressed: () { _searchController.clear(); setState(() => _searchResultLocation = null); FocusScope.of(context).unfocus(); }),
+      ),
+    );
+  }
+
+  Widget _buildFilterList() {
+    // Trên Mobile thì Scroll ngang, Trên Web thì căn giữa
+    return ListView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 15),
+      shrinkWrap: kIsWeb, // Web: co lại cho vừa nội dung
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: ChoiceChip(
+            label: const Text("Tất cả"),
+            selected: _selectedType == null,
+            onSelected: (bool selected) { setState(() => _selectedType = null); },
+            selectedColor: Colors.blueAccent,
+            backgroundColor: Colors.white,
+            labelStyle: TextStyle(color: _selectedType == null ? Colors.white : Colors.black),
+            elevation: 3,
+          ),
+        ),
+        ...DisasterType.values.map((type) {
+          if (type == DisasterType.sos) return const SizedBox();
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              label: Text(type.toVietnamese()),
+              selected: _selectedType == type,
+              onSelected: (bool selected) { setState(() => _selectedType = selected ? type : null); },
+              selectedColor: Colors.blueAccent,
+              backgroundColor: Colors.white,
+              labelStyle: TextStyle(color: _selectedType == type ? Colors.white : Colors.black),
+              elevation: 3,
+            ),
+          );
+        }).toList(),
+      ],
     );
   }
 }

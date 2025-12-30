@@ -357,16 +357,36 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
     setState(() => _isSearchingAddress = true);
 
     try {
-      List<Location> locations = await locationFromAddress(query);
-      if (locations.isNotEmpty) {
-        Location loc = locations.first;
-        LatLng target = LatLng(loc.latitude, loc.longitude);
-        setState(() => _searchResultLocation = target);
-        animatedMapMove(target, 15.0);
-        _fetchWeather(target);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Đã tìm thấy: $query")));
+      // 1. Tạo URL tìm kiếm (OpenStreetMap Nominatim)
+      final url = Uri.parse(
+          'https://nominatim.openstreetmap.org/search?q=$query&format=json&limit=1&addressdetails=1'
+      );
+
+      // 2. Gọi API
+      final response = await http.get(url);
+
+      if (response.statusCode == 200) {
+        final List data = json.decode(response.body);
+
+        if (data.isNotEmpty) {
+          // 3. Lấy toạ độ từ kết quả trả về
+          final firstResult = data[0];
+          final double lat = double.parse(firstResult['lat']);
+          final double lon = double.parse(firstResult['lon']);
+          final String displayName = firstResult['display_name']; // Tên đầy đủ địa điểm
+
+          LatLng target = LatLng(lat, lon);
+          setState(() => _searchResultLocation = target);
+
+          animatedMapMove(target, 15.0);
+          _fetchWeather(target);
+
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Đã tìm thấy: $displayName")));
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Không tìm thấy địa điểm này!")));
+        }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Không tìm thấy địa điểm này!")));
+        throw Exception('Lỗi kết nối API tìm kiếm');
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lỗi: Không tìm thấy địa danh")));

@@ -1,179 +1,159 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
-import 'package:disaster_app/api_config.dart'; // Import config của bạn
 
 class AuthService {
-  // Lấy link từ ApiConfig
-  static String get baseUrl => '${ApiConfig.baseUrl}/auth';
+  // Khởi tạo các công cụ của Firebase
+  final firebase_auth.FirebaseAuth _auth = firebase_auth.FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // Key để lưu token vào bộ nhớ máy
-  static const String _tokenKey = 'jwt_token';
-
-  // --- 1. CÁC HÀM QUẢN LÝ TOKEN (MỚI THÊM) ---
-
-  // Lưu Token
-  Future<void> saveToken(String token) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_tokenKey, token);
+  // --- [QUAN TRỌNG] MẸO: Biến số điện thoại thành Email giả ---
+  // Ví dụ: 09123 -> 09123@disasterapp.com
+  String _emailFromPhone(String phone) {
+    return "$phone@disasterapp.com";
   }
 
-  // Lấy Token (Để kẹp vào Header gọi API)
-  Future<String?> getToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_tokenKey);
-  }
-
-  // Xóa Token (Đăng xuất)
-  Future<void> removeToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_tokenKey);
-  }
-
-  // --- 2. CÁC HÀM API ---
-
-  // Đăng ký
+  // --- 1. ĐĂNG KÝ ---
   Future<bool> register(String name, String phone, String password) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/register'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'name': name, 'phone': phone, 'password': password}),
+      // Bước 1: Tạo tài khoản trên Firebase Authentication (Dùng mẹo Email giả)
+      firebase_auth.UserCredential cred = await _auth.createUserWithEmailAndPassword(
+        email: _emailFromPhone(phone),
+        password: password,
       );
-      return response.statusCode == 201;
+
+      // Bước 2: Lưu thông tin chi tiết (Tên, SĐT thật, Role) vào Firestore
+      // Tạo một User Object mới
+      User newUser = User(
+        id: cred.user!.uid, // Lấy ID từ Auth
+        name: name,
+        phone: phone,       // Lưu SĐT gốc vào đây để hiển thị
+        role: 'user',       // Mặc định là user thường
+      );
+
+      // Lưu lên Firestore collection 'users'
+      await _firestore.collection('users').doc(newUser.id).set(newUser.toJson());
+
+      return true; // Đăng ký thành công
     } catch (e) {
-      print("Lỗi đăng ký: $e");
+      print("Lỗi đăng ký Firebase: $e");
       return false;
     }
   }
 
-  // Đăng nhập (ĐÃ SỬA ĐỂ LƯU TOKEN)
+  // --- 2. ĐĂNG NHẬP ---
   Future<User?> login(String phone, String password) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'phone': phone, 'password': password}),
+      // Bước 1: Đăng nhập bằng Email giả + Mật khẩu
+      firebase_auth.UserCredential cred = await _auth.signInWithEmailAndPassword(
+        email: _emailFromPhone(phone),
+        password: password,
       );
 
-      if (response.statusCode == 200) {
-        print("Server Response: ${response.body}");
-        final data = json.decode(response.body);
+      // Bước 2: Lấy thông tin chi tiết từ Firestore về
+      DocumentSnapshot doc = await _firestore.collection('users').doc(cred.user!.uid).get();
 
-        // 1. Trích xuất và Lưu Token (Quan trọng nhất)
-        // Giả sử server trả về JSON dạng: { "token": "...", "user": {...} }
-        // Hoặc nếu token nằm phẳng cùng user: { "token": "...", "name": "...", ... }
-        if (data['token'] != null) {
-          await saveToken(data['token']);
-        }
+      if (doc.exists) {
+        // Bước 3: Chuyển đổi sang User Model
+        User user = User.fromFirestore(doc);
 
-        // 2. Lưu thông tin User như cũ
-        if (data['user'] != null) {
-          final user = User.fromJson(data['user']);
-          await _saveUserToLocal(user);
-          return user;
-        }
+        // Bước 4: Lưu vào bộ nhớ máy (để dùng offline hoặc load nhanh)
+        await _saveUserToLocal(user);
+
+        return user;
       }
       return null;
     } catch (e) {
-      print("Lỗi đăng nhập: $e");
+      print("Lỗi đăng nhập Firebase: $e");
       return null;
     }
   }
 
-  // Đăng xuất (ĐÃ SỬA)
+  // --- 3. ĐĂNG XUẤT ---
   Future<void> logout() async {
+    await _auth.signOut(); // Đăng xuất khỏi Firebase
+
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('user_data'); // Xóa user
-    await removeToken(); // Xóa token
+    await prefs.remove('user_data'); // Xóa cache
   }
 
-  // Lấy user hiện tại
+  // --- 4. LẤY USER HIỆN TẠI ---
   Future<User?> getCurrentUser() async {
+    // Cách 1: Lấy từ Cache Local (Nhanh nhất)
     final prefs = await SharedPreferences.getInstance();
     final String? userData = prefs.getString('user_data');
     if (userData != null) {
       return User.fromJson(json.decode(userData));
     }
+
+    // Cách 2: Nếu Cache trống, thử lấy từ Firebase Auth (Chắc chắn hơn)
+    final currentUser = _auth.currentUser;
+    if (currentUser != null) {
+      DocumentSnapshot doc = await _firestore.collection('users').doc(currentUser.uid).get();
+      if (doc.exists) {
+        User user = User.fromFirestore(doc);
+        await _saveUserToLocal(user); // Lưu lại cache
+        return user;
+      }
+    }
+
     return null;
   }
 
-  Future<void> _saveUserToLocal(User user) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('user_data', json.encode(user.toJson()));
-  }
-
-  // Hàm gọi API đổi tên
+  // --- 5. ĐỔI TÊN (Cập nhật Firestore) ---
   Future<bool> updateUserName(String userId, String newName) async {
     try {
-      final url = Uri.parse('${ApiConfig.baseUrl}/users/$userId');
+      // Cập nhật trên Firestore
+      await _firestore.collection('users').doc(userId).update({'name': newName});
 
-      final token = await getToken();
-
-      final response = await http.put(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
-        body: json.encode({'name': newName}),
-      );
-
-      if (response.statusCode == 200) {
-        // Cập nhật lại SharedPreferences để lần sau vào app tên vẫn đúng
-        final prefs = await SharedPreferences.getInstance();
-        final userDataString = prefs.getString('user_data');
-        if (userDataString != null) {
-          final userData = json.decode(userDataString);
-          userData['name'] = newName; // Sửa tên trong bộ nhớ máy
-          await prefs.setString('user_data', json.encode(userData));
-        }
-        return true;
+      // Cập nhật lại Cache Local
+      User? currentUser = await getCurrentUser();
+      if (currentUser != null) {
+        User updatedUser = currentUser.copyWith(name: newName);
+        await _saveUserToLocal(updatedUser);
       }
-      return false;
+
+      return true;
     } catch (e) {
       print("Lỗi đổi tên: $e");
       return false;
     }
   }
 
-  // --- HÀM ĐỔI MẬT KHẨU (GỌI API NODEJS) ---
+  // --- 6. ĐỔI MẬT KHẨU ---
   Future<bool> changePassword(String oldPassword, String newPassword) async {
     try {
-      final url = Uri.parse('$baseUrl/change-password'); // Đảm bảo baseUrl trỏ đúng file router kia
+      final user = _auth.currentUser;
+      if (user == null) return false;
 
-      // Lấy token đang lưu trong máy
-      final token = await getToken();
+      // Firebase bắt buộc phải xác thực lại (nhập pass cũ) trước khi đổi pass mới
+      // Dùng email của user hiện tại để xác thực
+      String email = user.email!;
 
-      if (token == null) {
-        print("Lỗi: Không tìm thấy token (chưa đăng nhập)");
-        return false;
-      }
-
-      final response = await http.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token', // Gửi token để Server biết ai đang đổi
-        },
-        body: json.encode({
-          'oldPassword': oldPassword,
-          'newPassword': newPassword,
-        }),
+      // Tạo credential từ pass cũ
+      firebase_auth.AuthCredential credential = firebase_auth.EmailAuthProvider.credential(
+          email: email,
+          password: oldPassword
       );
 
-      if (response.statusCode == 200) {
-        return true; // Đổi thành công
-      } else {
-        // In ra lỗi từ server (ví dụ: "Mật khẩu cũ không đúng")
-        print("Lỗi server: ${response.body}");
-        return false;
-      }
+      // Xác thực lại
+      await user.reauthenticateWithCredential(credential);
+
+      // Nếu OK thì đổi pass mới
+      await user.updatePassword(newPassword);
+
+      return true;
     } catch (e) {
-      print("Lỗi kết nối đổi pass: $e");
+      print("Lỗi đổi mật khẩu: $e");
       return false;
     }
   }
 
+  // Hàm phụ: Lưu user vào máy
+  Future<void> _saveUserToLocal(User user) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_data', json.encode(user.toJson()));
+  }
 }

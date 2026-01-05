@@ -1,8 +1,6 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
-import 'package:intl/intl.dart'; // Import intl để format ngày tháng
+import 'package:firebase_auth/firebase_auth.dart'; // 👈 1. Thêm cái này
+import 'package:intl/intl.dart';
 
 import '../../map/models/disaster_model.dart';
 import '../../map/services/disaster_service.dart';
@@ -27,31 +25,33 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
     _loadData();
   }
 
-  // Lấy ID user và tải danh sách báo cáo
+  // 👇 ĐÃ SỬA LẠI HÀM NÀY ĐỂ DÙNG FIREBASE
   Future<void> _loadData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String? userData = prefs.getString('user_data');
-    if (userData != null) {
-      final userMap = json.decode(userData);
-      _currentUserId = userMap['_id'];
-    }
+    // 1. Lấy User ID chuẩn từ Firebase
+    final user = FirebaseAuth.instance.currentUser;
+    _currentUserId = user?.uid;
 
     if (_currentUserId == null) {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
       return;
     }
 
-    // Tải tất cả và lọc bài của mình
+    // 2. Tải danh sách báo cáo từ Firestore
     final allReports = await _disasterService.fetchReports();
+
     if (mounted) {
       setState(() {
+        // 3. Lọc những bài có userId trùng với userId hiện tại
         _myReports = allReports.where((r) => r.userId == _currentUserId).toList();
+
         // Sắp xếp mới nhất lên đầu
         _myReports.sort((a, b) => b.time.compareTo(a.time));
         _isLoading = false;
       });
     }
   }
+
+  // ... (Phần còn lại giữ nguyên, mình chép lại cho đầy đủ bên dưới) ...
 
   Future<void> _deleteReport(String id) async {
     bool confirm = await showDialog(
@@ -69,7 +69,7 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
     if (confirm) {
       bool success = await _disasterService.deleteReport(id);
       if (success) {
-        _loadData(); // Tải lại danh sách
+        _loadData();
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Đã xóa.")));
       }
     }
@@ -86,7 +86,19 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _myReports.isEmpty
-          ? const Center(child: Text("Bạn chưa đăng tin nào.", style: TextStyle(color: Colors.grey)))
+          ? Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.history, size: 60, color: Colors.grey),
+            const SizedBox(height: 10),
+            Text("Bạn chưa đăng tin nào\n(ID: ${_currentUserId ?? 'null'})",
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.grey)
+            ),
+          ],
+        ),
+      )
           : ListView.builder(
         padding: const EdgeInsets.all(10),
         itemCount: _myReports.length,
@@ -98,7 +110,15 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             child: InkWell(
               onTap: () async {
-                // Bấm vào để sửa
+                if (report.type == DisasterType.sos) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text("Tin SOS không được phép chỉnh sửa!"),
+                      backgroundColor: Colors.orange,
+                    ),
+                  );
+                  return;
+                }
                 final result = await Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -114,7 +134,6 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                 padding: const EdgeInsets.all(12.0),
                 child: Row(
                   children: [
-                    // Ảnh thumbnail
                     Container(
                       width: 60, height: 60,
                       decoration: BoxDecoration(
@@ -128,8 +147,6 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                           : Icon(report.getIcon(), color: report.getTypeColor(), size: 30),
                     ),
                     const SizedBox(width: 15),
-
-                    // Nội dung chữ
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -159,8 +176,6 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                         ],
                       ),
                     ),
-
-                    // Nút xóa nhanh
                     IconButton(
                       icon: const Icon(Icons.delete_outline, color: Colors.red),
                       onPressed: () => _deleteReport(report.id),

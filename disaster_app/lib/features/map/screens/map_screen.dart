@@ -52,6 +52,11 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
   List<DisasterReport> _reports = [];
   final DisasterService _disasterService = DisasterService();
 
+  List<dynamic> _searchSuggestions = []; // Danh sách gợi ý từ API
+  Timer? _debounce; // Bộ đếm thời gian để không gọi API quá nhiều
+
+  final Map<String, List<dynamic>> _searchCache = {};
+
   // ✅ DÙNG BIẾN USER OBJECT (CHỨA ROLE) THAY VÌ CHỈ STRING ID
   User? _currentUser;
 
@@ -132,6 +137,7 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
 
     try {
       final response = await http.get(Uri.parse(url));
+      if (!mounted) return;
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['routes'].isNotEmpty) {
@@ -346,7 +352,9 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
       debugPrint("Lỗi định vị: $e");
       // Trên web đôi khi lỗi Timeout, hãy thử lại
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Lỗi: $e")));
-      setState(() => _isLocating = false);
+      if (mounted) {
+        setState(() => _isLocating = false);
+      }
     }
   }
 
@@ -363,7 +371,12 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
       );
 
       // 2. Gọi API
-      final response = await http.get(url);
+      final response = await http.get(
+        url,
+        headers: {
+          'User-Agent': 'DisasterApp_Student/1.0',
+        },
+      );
 
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
@@ -391,7 +404,9 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lỗi: Không tìm thấy địa danh")));
     } finally {
-      setState(() => _isSearchingAddress = false);
+      if (mounted) {
+        setState(() => _isSearchingAddress = false);
+      }
     }
   }
 
@@ -471,6 +486,64 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
             )
         )
     );
+  }
+
+  // Hàm này chạy mỗi khi người dùng gõ phím
+  void _onSearchChanged(String query) {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+
+    // Đợi 500ms sau khi ngừng gõ mới gọi API (để đỡ lag và đỡ bị server chặn)
+    _debounce = Timer(const Duration(milliseconds: 300), () async {
+      if (!mounted) return;
+      if (query.isEmpty) {
+        setState(() => _searchSuggestions = []);
+        return;
+      }
+
+      try {
+        // Gọi API tìm kiếm của Nominatim
+        final url = Uri.parse(
+            'https://nominatim.openstreetmap.org/search?q=$query&format=json&limit=5&addressdetails=1&countrycodes=vn'
+          // Lưu ý: Mình thêm &countrycodes=vn để ưu tiên tìm ở Việt Nam
+        );
+
+        final response = await http.get(
+          url,
+          headers: {'User-Agent': 'DisasterApp_Student/1.0'},
+        );
+
+        if (!mounted) return;
+
+        if (response.statusCode == 200) {
+          setState(() {
+            _searchSuggestions = json.decode(response.body);
+          });
+        }
+      } catch (e) {
+        print("Lỗi gợi ý: $e");
+      }
+    });
+  }
+
+  // Hàm xử lý khi người dùng CHỌN một địa điểm trong danh sách
+  void _selectSuggestion(dynamic suggestion) {
+    final double lat = double.parse(suggestion['lat']);
+    final double lon = double.parse(suggestion['lon']);
+    final String displayName = suggestion['display_name'];
+
+    // 1. Cập nhật ô nhập liệu thành tên địa điểm đã chọn
+    _searchController.text = displayName;
+
+    // 2. Xóa danh sách gợi ý đi (để ẩn Dropdown)
+    setState(() {
+      _searchSuggestions = [];
+      _searchResultLocation = LatLng(lat, lon);
+    });
+
+    // 3. Di chuyển map đến đó
+    animatedMapMove(_searchResultLocation!, 15.0);
+    _fetchWeather(_searchResultLocation!);
+    FocusScope.of(context).unfocus(); // Ẩn bàn phím
   }
 
   Widget _buildActionBtn({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
@@ -574,9 +647,18 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               // 1. Dòng Loại thiên tai • Người đăng (Cũ)
-                              Text(
-                                "${report.type.toVietnamese()} • ${report.userName ?? 'Ẩn danh'}",
-                                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                              Builder(
+                                  builder: (context) {
+                                    String displayName = report.userName ?? 'Ẩn danh';
+                                    if (_currentUser != null && report.userId == _currentUser!.id) {
+                                      displayName = _currentUser!.name ?? displayName;
+                                    }
+
+                                    return Text(
+                                      "${report.type.toVietnamese()} • $displayName",
+                                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                    );
+                                  }
                               ),
 
                               // 2. Dòng Mô tả chi tiết (Mới)
@@ -771,45 +853,6 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
           // 2. KHU VỰC TÌM KIẾM & BỘ LỌC (PHÂN LUỒNG APP/WEB)
           // ---------------------------------------------------------
           // Nếu là WEB: Căn giữa màn hình
-          if (isWebLayout)
-            Positioned(
-              top: 20, left: 0, right: 0, // Neo top, full ngang
-              child: Column( // Dùng Column để xếp Tìm kiếm trên, Lọc dưới
-                children: [
-                  // Thanh tìm kiếm Web (Rộng tối đa 600)
-                  Container(
-                    width: 600,
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.95), borderRadius: BorderRadius.circular(30), boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))]),
-                    child: _buildSearchField(), // (Đã tách hàm bên dưới cho gọn)
-                  ),
-                  const SizedBox(height: 15),
-                  // Thanh bộ lọc Web (Rộng tối đa 800)
-                  SizedBox(
-                    height: 40, width: 800,
-                    child: Center( // Căn giữa các chip
-                      child: _buildFilterList(), // (Đã tách hàm)
-                    ),
-                  ),
-                ],
-              ),
-            )
-          // Nếu là MOBILE: Giữ nguyên vị trí cũ (Positioned)
-          else ...[
-            Positioned(
-              top: 10, left: 15, right: 15,
-              child: Container(
-                decoration: BoxDecoration(color: Colors.white.withOpacity(0.95), borderRadius: BorderRadius.circular(30), boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))]),
-                child: _buildSearchField(),
-              ),
-            ),
-            Positioned(
-              top: 70, left: 0, right: 0,
-              child: SizedBox(
-                height: 40,
-                child: _buildFilterList(),
-              ),
-            ),
-          ],
 
           // ---------------------------------------------------------
           // 3. CÁC NÚT CHỨC NĂNG (History, SOS, Weather)
@@ -850,6 +893,63 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
               right: isWebLayout ? 20 : 5,
               child: GestureDetector(onTap: _showWeatherDetail, child: WeatherCard(weatherData: _weatherInfo))
           ),
+          if (isWebLayout)
+            Positioned(
+              top: 20, left: 0, right: 0, // Neo top, full ngang
+              child: Column( // Dùng Column để xếp Tìm kiếm trên, Lọc dưới
+                children: [
+                  // Thanh tìm kiếm Web (Rộng tối đa 600)
+                  Container(
+                    width: 600,
+                    decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))]
+                    ),
+                    child: ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: _buildSearchField()
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  // Thanh bộ lọc Web (Rộng tối đa 800)
+                  SizedBox(
+                    height: 40, width: 800,
+                    child: Center( // Căn giữa các chip
+                      child: _buildFilterList(), // (Đã tách hàm)
+                    ),
+                  ),
+                ],
+              ),
+            )
+          // Nếu là MOBILE: Giữ nguyên vị trí cũ (Positioned)
+          else
+          // 👇 GỘP CHUNG TÌM KIẾM VÀ BỘ LỌC VÀO 1 COLUMN DUY NHẤT
+            Positioned(
+              top: 10, left: 15, right: 15, // Căn lề chung
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 1. THANH TÌM KIẾM
+                  Container(
+                    decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.95),
+                        borderRadius: BorderRadius.circular(30),
+                        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))]
+                    ),
+                    child: _buildSearchField(),
+                  ),
+
+                  const SizedBox(height: 10), // Khoảng cách giữa 2 thanh
+
+                  // 2. THANH BỘ LỌC (Sẽ tự bị đẩy xuống khi tìm kiếm xổ ra)
+                  SizedBox(
+                    height: 40,
+                    child: _buildFilterList(),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
 
@@ -890,19 +990,76 @@ class MapScreenState extends State<MapScreen> with AutomaticKeepAliveClientMixin
   // --- HÀM TÁCH RIÊNG (để code đỡ rối) ---
 
   Widget _buildSearchField() {
-    return TextField(
-      controller: _searchController,
-      textInputAction: TextInputAction.search,
-      onSubmitted: (_) => _searchPlace(),
-      decoration: InputDecoration(
-        hintText: "Tìm kiếm (VD: Hà Nội...)",
-        border: InputBorder.none,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-        prefixIcon: const Icon(Icons.search, color: Colors.blueAccent),
-        suffixIcon: _isSearchingAddress
-            ? const Padding(padding: EdgeInsets.all(12.0), child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)))
-            : IconButton(icon: const Icon(Icons.clear, color: Colors.grey), onPressed: () { _searchController.clear(); setState(() => _searchResultLocation = null); FocusScope.of(context).unfocus(); }),
-      ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 1. Ô NHẬP LIỆU
+        TextField(
+          controller: _searchController,
+          textInputAction: TextInputAction.search,
+          // 👇 Gọi hàm gợi ý khi gõ
+          onChanged: _onSearchChanged,
+          // 👇 Vẫn giữ nút Enter để tìm kiếm thủ công nếu muốn
+          onSubmitted: (_) {
+            if (_searchSuggestions.isNotEmpty) {
+              _selectSuggestion(_searchSuggestions[0]); // Enter thì chọn cái đầu tiên
+            } else {
+              _searchPlace();
+            }
+          },
+          decoration: InputDecoration(
+            hintText: "Tìm kiếm (VD: Hà Nội...)",
+            border: InputBorder.none,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            prefixIcon: const Icon(Icons.search, color: Colors.blueAccent),
+            suffixIcon: _searchController.text.isNotEmpty
+                ? IconButton(
+                icon: const Icon(Icons.clear, color: Colors.grey),
+                onPressed: () {
+                  _searchController.clear();
+                  setState(() {
+                    _searchSuggestions = [];
+                    _searchResultLocation = null;
+                  });
+                  FocusScope.of(context).unfocus();
+                })
+                : null,
+          ),
+        ),
+
+        // 2. DANH SÁCH DROP DOWN (Chỉ hiện khi có kết quả)
+        if (_searchSuggestions.isNotEmpty)
+          Container(
+            constraints: const BoxConstraints(maxHeight: 200), // Chiều cao tối đa 200
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              border: Border(top: BorderSide(color: Colors.grey, width: 0.5)),
+            ),
+            child: ListView.separated(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              itemCount: _searchSuggestions.length,
+              separatorBuilder: (ctx, i) => const Divider(height: 1, indent: 10, endIndent: 10),
+              itemBuilder: (context, index) {
+                final item = _searchSuggestions[index];
+                return ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.location_on_outlined, size: 20, color: Colors.grey),
+                  title: Text(
+                    item['display_name'].toString().split(',')[0], // Tên chính (ngắn gọn)
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    item['display_name'], // Địa chỉ đầy đủ
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  onTap: () => _selectSuggestion(item),
+                );
+              },
+            ),
+          ),
+      ],
     );
   }
 

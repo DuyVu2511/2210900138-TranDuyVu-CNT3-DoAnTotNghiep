@@ -1,167 +1,119 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:http/http.dart' as http;
-import 'package:latlong2/latlong.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http; // Chỉ dùng để upload ảnh lên Cloudinary
 import '../models/disaster_model.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../../auth/models/user_model.dart';
-import 'package:flutter/foundation.dart';
-import 'package:disaster_app/api_config.dart';
-
-// 👇 1. THÊM IMPORT NÀY
-import '../../auth/services/auth_service.dart';
 
 class DisasterService {
-  static String get baseUrl => '${ApiConfig.baseUrl}/reports';
+  // Khởi tạo Firestore
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  // 👇 2. KHỞI TẠO AUTH SERVICE
-  final AuthService _authService = AuthService();
+  // Tên collection trên Firebase
+  final String _collection = 'reports';
 
-  // 👇 3. VIẾT HÀM LẤY HEADER (CÓ TOKEN)
-  Future<Map<String, String>> _getHeaders() async {
-    final token = await _authService.getToken(); // Lấy token từ bộ nhớ
-    return {
-      'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token', // Kẹp token vào đây
-    };
-  }
-
-  // 4. SỬA HÀM fetchReports
+  // 1. LẤY DANH SÁCH BÁO CÁO (REAL-TIME hoặc GET 1 LẦN)
+  // Ở đây mình dùng GET 1 lần cho giống logic cũ, nếu muốn tự động cập nhật thì dùng snapshots()
   Future<List<DisasterReport>> fetchReports() async {
     try {
-      // 👇 Dùng _getHeaders() thay vì gọi trần
-      final headers = await _getHeaders();
-      final response = await http.get(Uri.parse(baseUrl), headers: headers);
+      // Lấy dữ liệu, sắp xếp mới nhất lên đầu
+      final snapshot = await _firestore
+          .collection(_collection)
+          .orderBy('timestamp', descending: true)
+          .get();
 
-      if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
-
-        return data.map((json) => DisasterReport(
-          id: json['_id'],
-          title: json['title'],
-          description: json['description'] ?? '',
-          type: _parseType(json['type']),
-          location: LatLng(
-            json['location']['latitude'].toDouble(),
-            json['location']['longitude'].toDouble(),
-          ),
-          time: DateTime.parse(json['timestamp']),
-          radius: (json['radius'] ?? 100).toDouble(),
-          imagePath: json['imagePath'],
-          userId: json['userId'] ?? '',
-          userName: json['userName'],
-        )).toList();
-      } else if (response.statusCode == 401) {
-        // Nếu Token hết hạn -> Đăng xuất (Tùy chọn)
-        print("Token hết hạn!");
-        return [];
-      } else {
-        throw Exception('Không tải được dữ liệu');
-      }
+      return snapshot.docs.map((doc) => DisasterReport.fromFirestore(doc)).toList();
     } catch (e) {
-      print("Lỗi gọi API: $e");
+      print("Lỗi tải báo cáo: $e");
       return [];
     }
   }
 
-  // 5. SỬA HÀM createReport
+  // 2. TẠO BÁO CÁO MỚI
   Future<bool> createReport(DisasterReport report) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final String? userData = prefs.getString('user_data');
-      String currentUserId = "anonymous";
-      String currentUserName = "Ẩn danh";
+      // Lấy thông tin người dùng hiện tại từ Firebase Auth
+      final user = _auth.currentUser;
 
-      if (userData != null) {
-        final userMap = json.decode(userData);
-        currentUserId = userMap['_id'] ?? userMap['phone'];
-        currentUserName = userMap['name'];
+      // Nếu chưa đăng nhập thì đặt là ẩn danh hoặc chặn lại tùy bạn
+      String userId = user?.uid ?? 'anonymous';
+      String userName = 'Ẩn danh';
+
+      // Lấy tên người dùng từ Firestore (nếu có)
+      if (user != null) {
+        final userDoc = await _firestore.collection('users').doc(userId).get();
+        if (userDoc.exists) {
+          userName = userDoc['name'] ?? 'Người dùng';
+        }
       }
 
-      // 👇 Dùng _getHeaders()
-      final headers = await _getHeaders();
+      // Chuẩn bị dữ liệu
+      final data = {
+        'title': report.title,
+        'description': report.description,
+        'type': report.type.name,
+        'location': {
+          'latitude': report.location.latitude,
+          'longitude': report.location.longitude,
+        },
+        'timestamp': FieldValue.serverTimestamp(), // Lấy giờ server cho chuẩn
+        'radius': report.radius,
+        'imagePath': report.imagePath,
+        'userId': userId,
+        'userName': userName,
+      };
 
-      final response = await http.post(
-        Uri.parse(baseUrl),
-        headers: headers, // <--- Đã thay thế header cứng
-        body: json.encode({
-          'title': report.title,
-          'description': report.description,
-          'type': report.type.name,
-          'location': {
-            'latitude': report.location.latitude,
-            'longitude': report.location.longitude,
-          },
-          'radius': report.radius,
-          'imagePath': report.imagePath,
-          'userId': currentUserId,
-          'userName': currentUserName,
-        }),
-      );
+      // Đẩy lên Firestore
+      await _firestore.collection(_collection).add(data);
 
-      return response.statusCode == 201;
+      return true;
     } catch (e) {
-      print("Lỗi: $e");
+      print("Lỗi tạo báo cáo: $e");
       return false;
     }
   }
 
-  // 6. SỬA HÀM deleteReport
+  // 3. XÓA BÁO CÁO
   Future<bool> deleteReport(String id) async {
     try {
-      // 👇 Dùng _getHeaders()
-      final headers = await _getHeaders();
-
-      final response = await http.delete(
-          Uri.parse('$baseUrl/$id'),
-          headers: headers // <--- Thêm header vào lệnh xóa
-      );
-
-      if (response.statusCode == 200) {
-        return true;
-      } else {
-        return false;
-      }
+      await _firestore.collection(_collection).doc(id).delete();
+      return true;
     } catch (e) {
       print("Lỗi xóa báo cáo: $e");
       return false;
     }
   }
 
-  // 7. SỬA HÀM updateReport
+  // 4. CẬP NHẬT BÁO CÁO
   Future<bool> updateReport(DisasterReport report) async {
     try {
-      // 👇 Dùng _getHeaders()
-      final headers = await _getHeaders();
+      final data = {
+        'title': report.title,
+        'description': report.description,
+        'type': report.type.name,
+        'location': {
+          'latitude': report.location.latitude,
+          'longitude': report.location.longitude,
+        },
+        'radius': report.radius,
+        'imagePath': report.imagePath,
+        // Không cập nhật userId, userName, timestamp để giữ nguyên gốc
+      };
 
-      final response = await http.put(
-        Uri.parse('$baseUrl/${report.id}'),
-        headers: headers, // <--- Thay thế header cứng
-        body: json.encode({
-          'title': report.title,
-          'description': report.description,
-          'type': report.type.name,
-          'location': {
-            'latitude': report.location.latitude,
-            'longitude': report.location.longitude,
-          },
-          'radius': report.radius,
-          'imagePath': report.imagePath
-        }),
-      );
-
-      return response.statusCode == 200;
+      await _firestore.collection(_collection).doc(report.id).update(data);
+      return true;
     } catch (e) {
       print("Lỗi cập nhật báo cáo: $e");
       return false;
     }
   }
 
-  // Hàm upload ảnh giữ nguyên (Cloudinary không cần JWT của server mình)
+  // 5. UPLOAD ẢNH (Giữ nguyên Cloudinary vì nó độc lập với Database)
   Future<String?> uploadImageToCloud(File imageFile) async {
     try {
-      const cloudName = "dqz4kwlgq";
-      const uploadPreset = "disaster_upload";
+      const cloudName = "dqz4kwlgq"; // Thay bằng tên Cloud của bạn
+      const uploadPreset = "disaster_upload"; // Thay bằng preset của bạn
 
       final url = Uri.parse('https://api.cloudinary.com/v1_1/$cloudName/image/upload');
 
@@ -184,12 +136,5 @@ class DisasterService {
       print("Lỗi upload: $e");
       return null;
     }
-  }
-
-  DisasterType _parseType(String typeString) {
-    return DisasterType.values.firstWhere(
-          (e) => e.name == typeString,
-      orElse: () => DisasterType.flood,
-    );
   }
 }

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../map/models/disaster_model.dart';
 import '../../map/services/disaster_service.dart';
 
@@ -121,19 +122,21 @@ class _CreateReportScreenState extends State<CreateReportScreen> {
       }
     }
 
+    final currentUser = FirebaseAuth.instance.currentUser;
+    final currentUserId = currentUser?.uid ?? 'unknown';
+
     // 2. Đóng gói dữ liệu để chuẩn bị gửi
     final newReport = DisasterReport(
-      // Nếu sửa: Dùng ID cũ. Nếu mới: Để rỗng (Server tự tạo ID)
       id: widget.existingReport?.id ?? '',
       title: _titleController.text,
       description: _descController.text,
-      // Nếu sửa: Giữ nguyên vị trí cũ. Nếu mới: Lấy vị trí GPS hiện tại
       location: widget.existingReport?.location ?? widget.currentLocation,
       type: _selectedType,
       time: DateTime.now(),
       radius: _radius,
-      imagePath: imageUrl,
-      userId: widget.existingReport?.userId ?? '',
+      imagePath: imageUrl, // Link ảnh đã upload (hoặc null)
+      userId: widget.existingReport?.userId ?? currentUserId,
+      userName: widget.existingReport?.userName ?? currentUser?.displayName ?? 'Người dùng',
     );
 
     // 3. Gửi lên Server

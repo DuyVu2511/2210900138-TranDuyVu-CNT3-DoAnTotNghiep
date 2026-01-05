@@ -1,8 +1,10 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class User {
   final String id;
   final String name;
   final String phone;
-  final String role; // Nên thêm trường này vì Server của bạn có trả về
+  final String role;
 
   User({
     required this.id,
@@ -25,23 +27,31 @@ class User {
     );
   }
 
-  // Chuyển từ JSON (Server trả về) -> Object
-  factory User.fromJson(Map<String, dynamic> json) {
+  // --- [MỚI] Chuyển từ Firestore Document -> Object ---
+  factory User.fromFirestore(DocumentSnapshot doc) {
+    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
     return User(
-      // 1. Ưu tiên lấy '_id', nếu không có thì lấy 'id', nếu null thì lấy chuỗi rỗng ''
-      id: json['_id'] ?? json['id'] ?? '',
-
-      // 2. Thêm '?? ""' vào cuối. Nếu server trả về null, nó sẽ thành chuỗi rỗng.
-      name: json['name'] ?? '',
-      phone: json['phone'] ?? '',
-      role: json['role'] ?? 'user', // Mặc định là user nếu thiếu
+      id: doc.id, // Lấy ID của document
+      name: data['name'] ?? '',
+      phone: data['phone'] ?? '', // Lấy SĐT thật lưu trong data
+      role: data['role'] ?? 'user',
     );
   }
 
-  // Chuyển từ Object -> JSON
+  // Giữ lại cái này để lưu vào SharedPreferences (Cache cục bộ)
+  factory User.fromJson(Map<String, dynamic> json) {
+    return User(
+      id: json['id'] ?? '',
+      name: json['name'] ?? '',
+      phone: json['phone'] ?? '',
+      role: json['role'] ?? 'user',
+    );
+  }
+
+  // Chuyển Object -> Map (để lưu lên Firestore hoặc Local)
   Map<String, dynamic> toJson() {
     return {
-      '_id': id,
+      'id': id,
       'name': name,
       'phone': phone,
       'role': role,

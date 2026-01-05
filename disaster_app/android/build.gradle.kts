@@ -1,3 +1,14 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        // Classpath cần thiết cho Firebase
+        classpath("com.google.gms:google-services:4.4.0")
+    }
+}
+
 allprojects {
     repositories {
         google()
